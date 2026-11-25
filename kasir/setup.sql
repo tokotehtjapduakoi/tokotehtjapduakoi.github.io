@@ -362,6 +362,13 @@ begin
   if (to_jsonb(new) - '{status,voided_at,held}'::text[]) is distinct from (to_jsonb(old) - '{status,voided_at,held}'::text[]) then
     raise exception 'Nota terkunci: hanya status yang boleh berubah';
   end if;
+  -- status hanya lunas -> batal (sekali); voided_at hanya diisi sekali
+  if new.status is distinct from old.status and not (old.status = 'lunas' and new.status = 'batal') then
+    raise exception 'Nota terkunci: status hanya bisa lunas -> batal';
+  end if;
+  if new.voided_at is distinct from old.voided_at and old.voided_at is not null then
+    raise exception 'Nota terkunci: waktu batal tidak bisa diubah';
+  end if;
   return new;
 end $$;
 drop trigger if exists pos_nota_lock on public.pos_notas;
@@ -383,7 +390,7 @@ language sql stable security definer set search_path = public as $$
   select jsonb_build_object(
     'id', n.id, 'no', n.no, 'total', n.total, 'change', n.change,
     'pulls', case when r.nota is null then 0
-                  else coalesce((select t.pulls from kk_tiers t where t.min_total <= n.total
+                  else coalesce((select t.pulls from kk_tiers t where t.min_total <= r.total
                                   order by t.min_total desc limit 1), 0) end,
     'code_status', case when r.nota is null then 'tidak_ada' when r.held then 'ditahan' else 'aktif' end,
     'expires_at', r.expires_at)
@@ -396,7 +403,7 @@ $$;
 --     method_id, total, cash_received, photo_path, customer_phone, code}
 -- Satu transaksi: nota + baris + voucher + kk_receipts (kode klaim, hanya hash-nya).
 create or replace function public.pos_checkout(p jsonb) returns jsonb
-language plpgsql security definer set search_path = public, extensions as $$
+language plpgsql security definer set search_path = public as $$
 declare
   v_uid uuid := auth.uid();
   v_now timestamptz := now();
@@ -430,6 +437,7 @@ declare
   v_seq int;
   v_no text;
   v_constraint text;
+  v_kk_total int;
 begin
   if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
   if coalesce(p->>'id', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
@@ -450,6 +458,9 @@ begin
 
   if v_client_at is null then raise exception 'Waktu nota kosong'; end if;
   if v_client_at > v_now + interval '5 minutes' then raise exception 'Jam HP tidak sesuai, periksa jam HP'; end if;
+  if v_client_at < v_now - interval '3 days' then
+    raise exception 'Nota lebih dari 3 hari, laporkan ke pemilik';
+  end if;
 
   -- Perangkat: harus disetujui. Nota offline yang dibuat sebelum HP dicabut tetap diterima tapi ditahan.
   if pos__device_status(v_device) <> 'approved' then
@@ -545,8 +556,12 @@ begin
     if v_phone !~ '^62[0-9]{8,13}$' then raise exception 'Nomor HP pelanggan tidak valid'; end if;
   end if;
 
-  -- Kode klaim (dibuat HP): wajib bila ada yang dibayar.
-  if v_total > 0 then
+  -- Total untuk Kolam Koi: tidak pernah melebihi hitungan server (nota offline boleh beda,
+  -- tapi tarikan kartu tidak ikut membesar). Total tersimpan di nota tetap uang yang diterima.
+  v_kk_total := least(v_total, v_server);
+
+  -- Kode klaim (dibuat HP): wajib bila ada total untuk Kolam Koi.
+  if v_kk_total > 0 then
     v_code := upper(regexp_replace(coalesce(p->>'code', ''), '[\s-]', '', 'g'));
     if v_code !~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$' then raise exception 'Kode klaim tidak valid'; end if;
   end if;
@@ -579,10 +594,10 @@ begin
   end if;
 
   -- Semua gratis (total 0): tidak ada kode klaim.
-  if v_total > 0 then
+  if v_kk_total > 0 then
     begin
       insert into kk_receipts(nota, total, created_by, code_hash, bound_phone, expires_at, pos_nota_id, held)
-      values (v_no, v_total, v_uid, encode(extensions.digest(v_code, 'sha256'), 'hex'), v_phone,
+      values (v_no, v_kk_total, v_uid, encode(extensions.digest(v_code, 'sha256'), 'hex'), v_phone,
               v_now + case when v_phone is not null then interval '7 days' else interval '2 hours' end, v_id, v_held);
     exception when unique_violation then
       get stacked diagnostics v_constraint = constraint_name;

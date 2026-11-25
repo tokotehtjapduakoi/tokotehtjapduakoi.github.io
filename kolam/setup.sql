@@ -317,7 +317,7 @@ end $$;
 
 -- Klaim dengan kode acak 10 karakter (XXXXX-XXXXX) dari struk POS.
 create or replace function public.kk_claim_code(p_code text) returns jsonb
-language plpgsql security definer set search_path = public, extensions as $$
+language plpgsql security definer set search_path = public as $$
 declare
   m kk_members; r kk_receipts; v_code text := regexp_replace(upper(coalesce(p_code, '')), '[^A-Z0-9]', '', 'g');
 begin
@@ -445,6 +445,8 @@ begin
   if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
   if coalesce(trim(p_nota), '') = '' then raise exception 'Isi nomor nota'; end if;
   if coalesce(p_total, 0) <= 0 then raise exception 'Isi total belanja'; end if;
+  -- format K######-N dipakai nomor nota POS; nota manual tidak boleh memakainya
+  if upper(trim(p_nota)) ~ '^K[0-9]{6}-[0-9]+$' then raise exception 'Nomor nota format K...-... khusus POS'; end if;
   insert into kk_receipts(nota, total, created_by) values (upper(trim(p_nota)), p_total, auth.uid());
 exception when unique_violation then
   raise exception 'Nota % sudah terdaftar', upper(trim(p_nota));
@@ -461,6 +463,7 @@ begin
     select upper(trim(r->>'nota')), (r->>'total')::int, auth.uid()
       from jsonb_array_elements(p_rows) r
      where coalesce(trim(r->>'nota'), '') <> '' and (r->>'total')::int > 0
+       and upper(trim(r->>'nota')) !~ '^K[0-9]{6}-[0-9]+$'  -- format nota POS dilewati
     on conflict (nota) do nothing returning 1)
   select count(*) into n from ins;
   return n;
@@ -470,7 +473,8 @@ create or replace function public.kk_delete_receipt(p_nota text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
   if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
-  delete from kk_receipts where nota = upper(trim(p_nota)) and claimed_by is null;
+  -- nota POS hanya dibatalkan lewat void, bukan dihapus
+  delete from kk_receipts where nota = upper(trim(p_nota)) and claimed_by is null and pos_nota_id is null;
   if not found then raise exception 'Nota tidak ada atau sudah diklaim'; end if;
 end $$;
 
@@ -505,7 +509,7 @@ end $$;
 
 -- Reset PIN member yang lupa (khusus pemilik)
 create or replace function public.kk_reset_pin(p_phone text, p_pin text) returns void
-language plpgsql security definer set search_path = public, extensions as $$
+language plpgsql security definer set search_path = public as $$
 begin
   if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
   if p_pin !~ '^[0-9]{6}$' then raise exception 'PIN harus 6 angka'; end if;

@@ -206,6 +206,12 @@ def test_nota_terkunci(db, toko):
         with pytest.raises(SqlError, match="Nota terkunci"):
             db.sql(q)
     db.sql("update pos_notas set status = 'batal', voided_at = now(), held = true")  # kolom yang boleh berubah
+    db.sql("update pos_notas set held = false")
+    for q in ("update pos_notas set status = 'lunas'", "update pos_notas set voided_at = now() - interval '1 day'",
+              "update pos_notas set voided_at = null"):
+        with pytest.raises(SqlError, match="Nota terkunci"):
+            db.sql(q)
+    assert db.sql("select total, status, held from pos_notas") == [(str(r["total"]), "batal", "f")]
     for t in ("pos_notas", "pos_nota_lines", "pos_counters", "pos_shifts"):
         with pytest.raises(SqlError, match="permission denied"):
             db.sql(f"update {t} set id = id" if t != "pos_counters" else f"update {t} set seq = 0",
@@ -217,7 +223,6 @@ def test_nota_terkunci(db, toko):
     assert klien == {"pos_device_request", "pos_devices_list", "pos_device_decide", "pos_catalog", "pos_item_save",
                      "pos_variant_save", "pos_method_save", "pos_discount_save", "pos_me", "pos_checkout",
                      "pos_my_notas"}
-    assert r
 
 
 def voucher(db, kode="TK-ABCDE"):
@@ -299,3 +304,43 @@ def test_nota_shift_saya(db, toko):
 def test_jam_hp_di_masa_depan_ditolak(db, toko):
     nanti = db.sql("select now() + interval '1 hour'")[0][0]
     toko.ditolak(toko.payload(client_at=nanti, offline=True), "Jam HP tidak sesuai")
+
+
+def test_offline_total_besar_tidak_menambah_tarikan(db, toko):
+    # server: 2 x 15.000 = 30.000 (1 tarikan); HP mengaku 150.000 (5 tarikan)
+    r = toko.checkout(toko.payload(offline=True, total=150000, cash_received=150000))
+    assert r["total"] == 150000 and r["pulls"] == 1 and r["code_status"] == "aktif"
+    assert db.sql("select total, server_total, price_mismatch from pos_notas") == [("150000", "30000", "t")]
+    assert db.sql("select total from kk_receipts") == [("30000",)]
+    m = db.member("6281200000001")
+    assert db.sql("select kk_claim_code('ABCDE-23456')->>'pulls'", sebagai=m) == [("1",)]
+
+
+def test_offline_total_kecil_dipakai(db, toko):
+    r = toko.checkout(toko.payload(offline=True, total=25000, cash_received=25000))
+    assert r["pulls"] == 1
+    assert db.sql("select total from kk_receipts") == [("25000",)]
+
+
+def test_nota_lebih_3_hari_ditolak(db, toko):
+    lama = db.sql("select now() - interval '4 days'")[0][0]
+    toko.ditolak(toko.payload(client_at=lama, offline=True), "lebih dari 3 hari")
+
+
+def test_nota_pos_tidak_bisa_dihapus_atau_ditiru(db, toko):
+    r = toko.checkout(toko.payload())
+    with pytest.raises(SqlError, match="Nota tidak ada atau sudah diklaim"):
+        db.sql(f"select kk_delete_receipt('{r['no']}')", sebagai=toko.pemilik)
+    assert db.sql("select count(*) from kk_receipts") == [("1",)]
+    # format nomor POS tidak boleh dipakai nota manual (bisa memblokir checkout hari itu)
+    besok = r["no"][:-3] + "002"
+    with pytest.raises(SqlError, match="khusus POS"):
+        db.sql(f"select kk_add_receipt('{besok.lower()}', 30000)", sebagai=toko.pemilik)
+    n = db.sql(f"select kk_add_receipts('[{{\"nota\":\"{besok}\",\"total\":30000}},"
+               f"{{\"nota\":\" k261125-9 \",\"total\":30000}},{{\"nota\":\"ESB-1\",\"total\":30000}}]'::jsonb)",
+               sebagai=toko.pemilik)
+    assert n == [("1",)]
+    assert db.sql("select nota from kk_receipts order by nota") == [("ESB-1",), (r["no"],)]
+    # nota manual biasa masih bisa dihapus
+    db.sql("select kk_delete_receipt('ESB-1')", sebagai=toko.pemilik)
+    assert toko.checkout(toko.payload(code="ABCDE23457"))["no"] == besok
