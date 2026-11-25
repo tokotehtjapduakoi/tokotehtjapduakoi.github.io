@@ -221,3 +221,34 @@ test("alasan void dan nama perangkat berisi HTML tampil apa adanya", () => lingk
   assert.equal(await page.locator("#app img[src='x']").count(), 0);
   await context.close();
 }));
+
+test("nota ditahan: tampil di Setujui, lepas tahanan dengan dua ketuk; laporan menandai metode nonaktif", () => lingkungan(async ({ server, browser, sql, foto }) => {
+  const k = await bukaHalaman(browser, server);
+  await siapJual(k.page, k.buka, server);
+  await jualTunai(k.page, foto, 2);
+  await k.context.close();
+  const no = (await sql.query("select no from pos_notas")).rows[0].no;
+  // keadaan seperti nota offline dari HP yang dicabut (nota terkunci pemicu: pakai jalur pembuat database)
+  await sql.query("begin; set local session_replication_role = replica; update pos_notas set held = true, offline = true, method_inactive = true; commit");
+  await sql.query("update kk_receipts set held = true, expires_at = now() - interval '1 hour'");
+  const { context, page } = await pemilikMasuk(browser, server);
+  await tab(page, "Laporan").click();
+  const w = page.locator(".peringatan");
+  await w.getByText(/1 nota ditahan .*tab Setujui/).waitFor();
+  await w.getByText(new RegExp(`Nota offline ${no} \\(Rp30\\.000\\) memakai metode bayar "Tunai" yang sudah nonaktif`)).waitFor();
+  await tab(page, "Setujui").click();
+  await page.getByRole("heading", { name: "Nota ditahan (1)" }).waitFor();
+  const kartu = page.locator(".kartu-tahan", { hasText: no });
+  await kartu.getByText(/2× Teh Tarik 14 oz/).waitFor();
+  await kartu.getByText("Ocha").waitFor();
+  await kartu.locator("img.foto-nota").waitFor();
+  await kartu.getByRole("button", { name: "Lepas tahanan" }).click();
+  assert.equal((await sql.query("select held from pos_notas")).rows[0].held, true, "ketukan pertama belum melepas");
+  await kartu.getByRole("button", { name: /Yakin lepas tahanan/ }).click();
+  await page.locator(".hasil", { hasText: `Tahanan nota ${no} dilepas` }).waitFor();
+  assert.equal(await page.locator(".kartu-tahan").count(), 0);
+  const r = (await sql.query("select n.held nh, r.held rh, r.expires_at > now() aktif from pos_notas n join kk_receipts r on r.pos_nota_id = n.id")).rows[0];
+  assert.deepEqual(r, { nh: false, rh: false, aktif: true });
+  assert.equal((await sql.query("select count(*)::int n from pos_audit where action = 'lepas_tahan'")).rows[0].n, 1);
+  await context.close();
+}));

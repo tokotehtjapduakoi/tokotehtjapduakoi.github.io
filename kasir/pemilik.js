@@ -1,4 +1,4 @@
-/* Layar pemilik Kasir Tjap Dua Koi: Laporan, Setujui (batal + perangkat), Atur (menu, metode, diskon, perangkat, staf),
+/* Layar pemilik Kasir Tjap Dua Koi: Laporan, Setujui (batal + nota ditahan + perangkat), Atur (menu, metode, diskon, perangkat, staf),
    dan verifikasi 2 langkah. Dimuat sesudah kasir.js dan memakai window.KasirApp. Semua RPC lewat sb.rpc, tanpa sb.from().
    Tab pemilik: Jual · Laporan · Setujui · Atur. Kas dan Nota tetap bisa dibuka dari Atur ("Laci kas" / "Nota shift ini"). */
 (function(){
@@ -10,7 +10,7 @@ const $=id=>document.getElementById(id);
 const OWNER_TABS=["laporan","setujui","atur"];
 const P0=()=>({
   lap:{day:null,data:null,memuat:false,galat:""},
-  set:{void:[],dev:[],memuat:false,galat:"",yakin:null,hasil:[],foto:{}},
+  set:{void:[],tahan:[],dev:[],memuat:false,galat:"",yakin:null,hasil:[],foto:{}},
   atur:{sec:"menu",cat:null,devs:[],memuat:false,galat:"",yakin:null},
   mfa:{tahap:null,faktor:null,enroll:null,kode:"",pesan:"",sibuk:false},
   badge:0});
@@ -67,7 +67,9 @@ function peringatan(d){const w=[];
   for(const v of d.voids||[])w.push(`Nota <s class="coret">${esc(v.no)}</s> dibatalkan (${rp(v.total)}). Alasan: ${esc(v.reason)}. Diajukan ${esc(v.by||"-")}, disetujui ${esc(v.approved_by||"-")}.`);
   if(d.pending_voids>0)w.push(`${esc(d.pending_voids)} pengajuan batal menunggu keputusanmu di tab Setujui.`);
   for(const m of (d.offline&&d.offline.mismatch)||[])w.push(`Nota offline ${esc(m.no)} beda harga: di HP ${rp(m.total)}, hitungan server ${rp(m.server_total)}.`);
-  if(d.offline&&d.offline.held>0)w.push(`${esc(d.offline.held)} nota ditahan (kode klaim belum aktif).`);
+  if(d.offline&&d.offline.held>0)w.push(`${esc(d.offline.held)} nota ditahan (kode klaim belum aktif). Periksa di tab Setujui.`);
+  for(const x of (d.offline&&d.offline.inactive)||[]){const apa=[x.discount?`diskon "${esc(x.discount)}"`:"",x.method?`metode bayar "${esc(x.method)}"`:""].filter(Boolean).join(" dan ");
+    w.push(`Nota offline ${esc(x.no)} (${rp(x.total)}) memakai ${apa} yang sudah nonaktif.`)}
   for(const s of d.shifts||[]){const nm=esc(s.cashier||"Kasir");
     if(s.selisih!=null&&s.selisih!==0)w.push(`Selisih kas shift ${nm}: ${esc(tanda(s.selisih))} (hitungan ${rp(s.counted)}, seharusnya ${rp(s.expected)}).`);
     if(s.selisih_terima!=null&&s.selisih_terima!==0)w.push(`Selisih saat terima laci (kasir penerima setelah ${nm}): ${esc(tanda(s.selisih_terima))}.`);
@@ -100,11 +102,25 @@ const bukaFoto=async n=>{const f=P.set.foto,e=f[n.nota_id];if(!n.photo_path||(e&
   try{const r=await S.sb.storage.from("bukti").createSignedUrl(n.photo_path,300);if(!r.error&&r.data)url=r.data.signedUrl}catch(x){}
   f[n.nota_id]={at:Date.now(),url};segar("setujui")};
 async function muatSetuju(){const T=P.set;T.memuat=true;T.galat="";
-  try{[T.void,T.dev]=await Promise.all([A.rpc("pos_void_pending"),A.rpc("pos_devices_list")]);T.dev=T.dev.filter(d=>d.status==="pending");
-    hitungBadge();T.void.forEach(bukaFoto)}
+  try{[T.void,T.tahan,T.dev]=await Promise.all([A.rpc("pos_void_pending"),A.rpc("pos_held_list"),A.rpc("pos_devices_list")]);T.dev=T.dev.filter(d=>d.status==="pending");
+    hitungBadge();fotoSemua()}
   catch(e){T.galat=A.errMsg(e)}
   T.memuat=false;segar("setujui");A.renderTab()}
-function hitungBadge(){P.badge=P.set.void.length+P.set.dev.length}
+function hitungBadge(){P.badge=P.set.void.length+P.set.tahan.length+P.set.dev.length}
+const fotoSemua=()=>{P.set.void.forEach(bukaFoto);P.set.tahan.forEach(n=>bukaFoto({nota_id:n.id,photo_path:n.photo_path}))};
+// Nota ditahan: dibuat saat offline di HP yang kemudian dicabut. Lepas tahanan = kode klaim aktif.
+function vTahan(n){const T=P.set,k="t"+n.id,f=(T.foto[n.id]||{}).url,yakin=T.yakin&&T.yakin.k===k;
+  return `<section class="card kartu-tahan" data-nota="${esc(n.no)}"><div class="head"><h3>Nota ${esc(n.no)}</h3><b>${rp(n.total)}</b></div>
+  <p class="small muted">${esc(n.cashier||"Kasir")} · ${esc(n.device_label||"HP dicabut")} · ${esc(A.waktuHP(n.client_at))} · ${esc(n.method)}</p>
+  ${(n.lines||[]).map(l=>baris(`${esc(l.qty)}× ${esc(l.item)} ${esc(l.variant)}${l.free?" (gratis)":""}`,rp(l.price*l.qty))).join("")}
+  <p class="small muted">Dijual saat offline di HP yang sudah dicabut. Kode klaimnya belum bisa dipakai pelanggan.</p>
+  ${f?`<img class="foto-nota" src="${esc(f)}" alt="Foto bukti nota ${esc(n.no)}">`:n.photo_path?`<p class="small muted">${f===false?"Foto tidak bisa dimuat.":"Memuat foto..."}</p>`:""}
+  <button type="button" class="btn${yakin?"":" ghost"}" data-lepas="${esc(n.id)}">${yakin?"Yakin lepas tahanan? Ketuk lagi":"Lepas tahanan"}</button></section>`}
+async function lepasTahan(id){const T=P.set,n=T.tahan.find(x=>x.id===id);if(!n)return;
+  try{await A.rpc("pos_hold_release",{p_nota:id});
+    T.hasil.unshift({teks:`Tahanan nota ${n.no} dilepas. Kode klaimnya sudah bisa dipakai.`});
+    T.hasil=T.hasil.slice(0,5);T.yakin=null;P.lap.data=null;await muatSetuju()}
+  catch(e){T.galat=A.errMsg(e);T.yakin=null;A.render()}}
 function vVoid(n){const T=P.set,k="v"+n.id,f=(T.foto[n.nota_id]||{}).url;
   const yakin=T.yakin&&T.yakin.k===k?T.yakin.setuju:null;
   return `<section class="card kartu-void" data-nota="${esc(n.no)}"><div class="head"><h3>Nota ${esc(n.no)}</h3><b>${rp(n.total)}</b></div>
@@ -122,6 +138,7 @@ function vSetuju(){const T=P.set;
   ${T.galat?`<p class="err" role="alert">${esc(T.galat)}</p>`:""}</section>
   ${T.hasil.map(h=>`<section class="card hasil" role="status"><p><b>${esc(h.teks)}</b></p>${h.hilang&&h.hilang.length?`<p class="warn" id="kartu-hilang">Kartu sudah tidak ada di inventori member: ${esc(h.hilang.join(", "))}. Periksa manual.</p>`:""}</section>`).join("")}
   <h3>Pengajuan batal (${T.void.length})</h3>${T.void.length?T.void.map(vVoid).join(""):`<p class="muted">${T.memuat?"Memuat...":"Tidak ada pengajuan."}</p>`}
+  ${T.tahan.length?`<h3>Nota ditahan (${T.tahan.length})</h3>${T.tahan.map(vTahan).join("")}`:""}
   <h3>Perangkat menunggu (${T.dev.length})</h3>${T.dev.length?T.dev.map(d=>vDev(d,`<div class="qty"><button type="button" class="btn sm" data-dev="${esc(d.id)}" data-setuju="1" aria-label="Setujui perangkat ${esc(d.label||devKode(d.id))}">Setujui</button>
     <button type="button" class="btn sm ghost" data-dev="${esc(d.id)}" data-setuju="0" aria-label="Tolak perangkat ${esc(d.label||devKode(d.id))}">Tolak</button></div>`)).join(""):`<p class="muted">${T.memuat?"Memuat...":"Tidak ada perangkat menunggu."}</p>`}`}
 async function putusVoid(id,setuju){const T=P.set,n=T.void.find(x=>String(x.id)===String(id));if(!n)return;
@@ -135,6 +152,8 @@ async function putusDev(id,setuju){try{await A.rpc("pos_device_decide",{p_device
 function bindSetuju(){const m=$("set-muat");if(m)m.onclick=()=>muatSetuju();
   document.querySelectorAll("[data-void]").forEach(b=>b.onclick=()=>{const k="v"+b.dataset.void,setuju=b.dataset.setuju==="1",y=P.set.yakin;
     if(y&&y.k===k&&y.setuju===setuju){b.disabled=true;putusVoid(b.dataset.void,setuju)}else{P.set.yakin={k,setuju};A.render()}});
+  document.querySelectorAll("[data-lepas]").forEach(b=>b.onclick=()=>{const k="t"+b.dataset.lepas,y=P.set.yakin;
+    if(y&&y.k===k){b.disabled=true;lepasTahan(b.dataset.lepas)}else{P.set.yakin={k};A.render()}});
   document.querySelectorAll("[data-dev]").forEach(b=>b.onclick=()=>{b.disabled=true;putusDev(b.dataset.dev,b.dataset.setuju==="1")})}
 
 /* ---------- Atur ---------- */
@@ -234,9 +253,9 @@ function masuk(tab){if(!OWNER_TABS.includes(tab))return;
   if(tab==="setujui")muatSetuju();else if(!P.atur.cat)muatAtur()}
 // Angka badge Setujui: dimuat diam-diam setelah masuk dan tiap menit.
 async function segarBadge(){if(!mfaOk()||!A.daring()||P.set.memuat)return;
-  try{const [v,d]=await Promise.all([A.rpc("pos_void_pending"),A.rpc("pos_devices_list")]);
-    const dev=d.filter(x=>x.status==="pending"),b=v.length+dev.length;
-    P.set.void=v;P.set.dev=dev;if(b!==P.badge){P.badge=b;A.renderTab()}if(S.tab==="setujui")v.forEach(bukaFoto)}catch(e){}}
+  try{const [v,t,d]=await Promise.all([A.rpc("pos_void_pending"),A.rpc("pos_held_list"),A.rpc("pos_devices_list")]);
+    const dev=d.filter(x=>x.status==="pending"),b=v.length+t.length+dev.length;
+    P.set.void=v;P.set.tahan=t;P.set.dev=dev;if(b!==P.badge){P.badge=b;A.renderTab()}if(S.tab==="setujui")fotoSemua()}catch(e){}}
 function sesudahMe(){if(S.me&&S.me.role==="pemilik"&&mfaOk())segarBadge()}
 setInterval(()=>{if(S.me&&S.me.role==="pemilik"&&S.tab!=="setujui")segarBadge()},60*1000);
 function tabs(){return [["jual","Jual"],["laporan","Laporan"],["setujui","Setujui",P.badge>0?String(P.badge):"" ],["atur","Atur",null,["nota","kas"]]]}
