@@ -138,6 +138,27 @@ async function rpc(req, res, fn) {
 
 // ---------- Storage ----------
 const berkas = new Map(); // "bucket/path" -> {bytes, tipe}
+// supabase-js mengirim Blob/File sebagai multipart/form-data (bagian berkas ber-filename); ambil isi aslinya.
+function bagianBerkas(body, tipeHeader) {
+  const m = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(tipeHeader || "");
+  if (!m) return null;
+  const batas = Buffer.from("--" + (m[1] || m[2]));
+  let mulai = body.indexOf(batas);
+  while (mulai >= 0) {
+    const awal = mulai + batas.length;
+    const berikut = body.indexOf(batas, awal);
+    if (berikut < 0) break;
+    const bagian = body.subarray(awal + 2, berikut - 2); // buang CRLF di depan dan belakang
+    const sela = bagian.indexOf("\r\n\r\n");
+    const kepala = bagian.subarray(0, sela).toString();
+    if (/filename=/i.test(kepala)) {
+      const t = /content-type:\s*([^\r\n]+)/i.exec(kepala);
+      return { bytes: bagian.subarray(sela + 4), tipe: t ? t[1].trim() : "application/octet-stream" };
+    }
+    mulai = berikut;
+  }
+  return null;
+}
 async function storage(req, res, url) {
   const rute = decodeURIComponent(url.pathname.slice("/storage/v1/object/".length));
   const klaim = klaimDari(req);
@@ -164,12 +185,16 @@ async function storage(req, res, url) {
   if (req.method !== "POST") return kirim(res, 404, { message: "tidak ada di server tiruan" });
   const [bucket, ...p] = rute.split("/");
   const nama = p.join("/");
-  const bytes = await bacaBody(req);
+  const mentah = await bacaBody(req);
+  const isi = /^multipart\/form-data/i.test(req.headers["content-type"] || "")
+    ? bagianBerkas(mentah, req.headers["content-type"]) : null;
+  const bytes = isi ? isi.bytes : mentah;
+  const tipe = isi ? isi.tipe : req.headers["content-type"] || "application/octet-stream";
   try {
     const id = await sebagai(klaim, async (c) => (await c.query(
-      "insert into storage.objects(bucket_id, name, owner) values ($1, $2, $3) returning id",
-      [bucket, nama, klaim.sub ?? null])).rows[0].id);
-    berkas.set(`${bucket}/${nama}`, { bytes, tipe: req.headers["content-type"] || "application/octet-stream" });
+      "insert into storage.objects(bucket_id, name, owner, metadata) values ($1, $2, $3, $4) returning id",
+      [bucket, nama, klaim.sub ?? null, JSON.stringify({ size: bytes.length, mimetype: tipe })])).rows[0].id);
+    berkas.set(`${bucket}/${nama}`, { bytes, tipe });
     return kirim(res, 200, { Id: id, Key: `${bucket}/${nama}` });
   } catch (e) {
     return kirim(res, 400, { statusCode: "403", error: "Unauthorized", message: e.message });
@@ -196,6 +221,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/__uji/offline" && req.method === "POST") {
       offline = Boolean(json(await bacaBody(req)).on);
       return kirim(res, 200, { offline });
+    }
+    if (url.pathname === "/__uji/berkas" && req.method === "GET") { // isi berkas storage, untuk pemeriksaan uji
+      const f = berkas.get(url.searchParams.get("path"));
+      return f ? kirim(res, 200, f.bytes, f.tipe) : kirim(res, 404, { message: "tidak ada" });
     }
     const api = /^\/(auth|rest|storage)\/v1\//.test(url.pathname);
     if (api && offline) return req.socket.destroy();

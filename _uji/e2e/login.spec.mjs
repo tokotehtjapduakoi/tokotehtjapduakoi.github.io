@@ -36,6 +36,9 @@ test("setelah disetujui masuk layar jual", async () => {
   assert.match(daftar.find((d) => d.id === device).label, /^HP kasir depan · /);
   await rpcSebagai(server, "pemilik@uji.id", "pos_device_decide", { p_device: device, p_approve: true });
   await page.getByRole("button", { name: "Cek lagi" }).click();
+  await page.getByText("Buka shift dulu").waitFor(); // disetujui, tapi shift belum dibuka (UI shift: Task 11)
+  await rpcSebagai(server, "budi@uji.id", "pos_shift_open", { p_device: device, p_cash_start: 0 });
+  await page.getByRole("button", { name: "Cek lagi" }).click();
   await page.getByRole("button", { name: "Teh Tarik" }).waitFor();
   await context.close();
 });
@@ -67,6 +70,24 @@ test("tidak logout otomatis selama antrean belum kosong", async () => {
   await page.waitForTimeout(300);
   assert.equal(await formLogin(page).count(), 0);
   await page.getByText("Menunggu persetujuan pemilik").waitFor();
+  await context.close();
+});
+
+test("sentuhan layar mengulang hitungan diam", async () => {
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await page.clock.install();
+  await buka();
+  await masuk(page, "ocha@uji.id");
+  await page.getByText("Menunggu persetujuan pemilik").waitFor();
+  await page.clock.fastForward("20:00");
+  await page.mouse.click(10, 10); // pointerdown
+  await page.clock.fastForward("20:00");
+  await page.clock.fastForward("00:30");
+  await page.waitForTimeout(300);
+  assert.equal(await formLogin(page).count(), 0, "40 menit sejak masuk tetapi 20 menit sejak sentuhan: masih masuk");
+  await page.getByText("Menunggu persetujuan pemilik").waitFor();
+  await page.clock.fastForward("11:00");
+  await formLogin(page).waitFor();
   await context.close();
 });
 
