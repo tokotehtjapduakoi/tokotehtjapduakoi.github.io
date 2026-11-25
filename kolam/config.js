@@ -7,8 +7,8 @@
    Selama masih kosong, halaman menampilkan "Segera dibuka".
    ===================================================================== */
 window.KOLAM_CONFIG = {
-  supabaseUrl: "",
-  supabaseKey: "",
+  supabaseUrl: "https://trqjrhgtvvfviwcdhccp.supabase.co",
+  supabaseKey: "sb_publishable_u1ddXj_2pbs27cqPpJi9Zg_Q78So7lr",
   // Nomor WA toko untuk tombol "Lupa PIN" (pakai 62, tanpa 0 di depan)
   waNomor: "6281345306571"
 };
