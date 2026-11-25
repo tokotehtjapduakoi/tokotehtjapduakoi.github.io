@@ -236,6 +236,7 @@ function vTanpaShift(){const w=S.me.handover_waiting;
     <p class="muted">${S.tutup.handover?"Menunggu kasir berikutnya menerima laci. Kamu bisa keluar.":"Shift sudah ditutup. Terima kasih!"}</p>
     ${S.tutup.handover?"":`<button type="button" class="btn" id="buka-lagi">Buka toko lagi</button>`}</section>`;
   const pesan=`<p class="err" id="pesan" role="alert">${esc(B.pesan)}</p>`;
+  if(w&&w.is_mine)return `<section class="card"><h2>Laci sudah diserahkan</h2><p class="muted">Menunggu kasir berikutnya menerima laci. Kamu bisa keluar.</p></section>`;
   if(w)return `<section class="card"><h2>Terima laci dari ${esc(w.cashier_name||"kasir sebelumnya")}</h2>
     <p class="muted">Hitung uang di laci sekarang, lalu ketik jumlahnya.</p>
     <label for="hitung">Uang di laci (Rp)<input id="hitung" inputmode="numeric" autocomplete="off" value="${esc(B.hitung)}"></label>${pesan}
@@ -297,7 +298,9 @@ async function tutupShift(){if(!bisaTutup())return;
     if(K.fotoUrl)URL.revokeObjectURL(K.fotoUrl);
     K=K0();J=J0();N=N0();B=B0();S.tab="jual";S.tutup={handover:serah,shift:sid};
     await muatMe().catch(()=>{S.me={...S.me,shift:null}})}
-  catch(e){K.pesan=errMsg(e)}
+  catch(e){K.pesan=errMsg(e);
+    // Jawaban bisa hilang setelah server menutup shift: cocokkan ulang dengan server.
+    if(putus(e))await muatMe().catch(()=>{})}
   K.sibuk=false;render()}
 
 /* ---------- Nota: nota shift ini + antrean, ajukan batal ---------- */
@@ -314,7 +317,7 @@ const namaMetode=id=>{const m=cat().methods.find(x=>String(x.id)===String(id));r
 function barisAntre(it){const p=it.payload||{},peta={};
   for(const i of cat().items)for(const v of i.variants||[])peta[v.id]={item:i.name,variant:v.name,price:v.price};
   return (p.lines||[]).map(l=>({qty:l.qty,...(peta[l.variant_id]||{item:"Menu",variant:"",price:0})}))}
-const linkLaporWa=t=>"https://wa.me/"+(CFG.waNomor||"6281345306571")+"?text="+encodeURIComponent(t);
+const linkLaporWa=t=>CFG.waNomor?"https://wa.me/"+CFG.waNomor+"?text="+encodeURIComponent(t):"";
 function teksLaporAntre(it){const p=it.payload||{};
   return ["Nota kasir gagal terkirim ke server.",`Kasir: ${S.me&&S.me.name||""}`,`ID: ${it.id}`,`Waktu di HP: ${p.client_at||"-"}`,
     `Total: ${rp(p.total)} (${namaMetode(p.method_id)})`,...barisAntre(it).map(l=>`${l.qty}× ${l.item} ${l.variant}`),`Alasan: ${it.error}`].join("\n")}
@@ -335,7 +338,7 @@ function vNota(){
   return `<section class="card"><div class="head"><h2>Nota shift ini</h2><button type="button" class="btn sm ghost" id="muat-nota"${N.memuat?" disabled":""}>Muat ulang</button></div>
   ${N.galat?`<p class="err small" role="alert">${esc(N.galat)}</p>`:""}${vBaris()}</section>`}
 function vDetailServer(){const n=(N.server||[]).find(x=>x.id===N.sel.id);if(!n)return "";
-  const lines=(n.lines||[]).map(l=>`<div class="rg"><span>${l.qty}× ${esc(l.item)} ${esc(l.variant)}${l.free?" (gratis)":""}</span><span>${rp(l.price*l.qty)}</span></div>`).join("");
+  const lines=(n.lines||[]).map(l=>`<div class="rg"><span>${esc(l.qty)}× ${esc(l.item)} ${esc(l.variant)}${l.free?" (gratis)":""}</span><span>${rp(l.price*l.qty)}</span></div>`).join("");
   const status=n.status==="batal"?"Batal":n.has_void_request?"Menunggu persetujuan":"Lunas";
   return `<section class="card"><div class="head"><h2>Nota ${esc(n.no)}</h2><button type="button" class="btn sm ghost" id="balik-nota">← Daftar</button></div>
   <p class="small muted">${esc(waktuHP(n.client_at))} · ${esc(n.method)}${n.offline?" · dibuat offline":""}</p>
@@ -351,15 +354,15 @@ function vBatal(){const b=N.batal,ok=alasanBatal().length>=5;
   <button type="button" class="btn ghost" id="batal-x">Tidak jadi</button></div>`}
 const alasanBatal=()=>{const b=N.batal;return !b||!b.alasan?"":b.alasan==="Lainnya"?b.teks.trim():b.alasan};
 function vDetailAntre(){const it=S.antre.find(x=>x.id===N.sel.id);if(!it)return "";const p=it.payload||{};
-  const lines=barisAntre(it).map(l=>`<div class="rg"><span>${l.qty}× ${esc(l.item)} ${esc(l.variant)}</span><span>${rp(l.price*l.qty)}</span></div>`).join("");
+  const lines=barisAntre(it).map(l=>`<div class="rg"><span>${esc(l.qty)}× ${esc(l.item)} ${esc(l.variant)}</span><span>${rp(l.price*l.qty)}</span></div>`).join("");
   const lap=sudahLapor(it.id),yakin=N.hapusTap===it.id;
   return `<section class="card"><div class="head"><h2>Nota di HP</h2><button type="button" class="btn sm ghost" id="balik-nota">← Daftar</button></div>
   <p class="small muted">${esc(waktuHP(p.client_at))} · ${esc(namaMetode(p.method_id))}</p>${lines}
   <div class="total"><span>Total</span><b>${rp(p.total)}</b></div>
   ${it.error?`<p class="err" role="alert">Ditolak server: ${esc(it.error)}</p>
-    <a class="btn" id="lapor" data-lapor="${esc(it.id)}" target="_blank" rel="noopener" href="${esc(linkLaporWa(teksLaporAntre(it)))}">Laporkan ke pemilik</a>
+    ${linkLaporWa("x")?`<a class="btn" id="lapor" data-lapor="${esc(it.id)}" target="_blank" rel="noopener" href="${esc(linkLaporWa(teksLaporAntre(it)))}">Laporkan ke pemilik</a>`:`<p class="small muted">Nomor pemilik belum diatur. Hubungi pemilik langsung.</p>`}
     <button type="button" class="btn ${yakin?"":"ghost"}" id="hapus-hp"${lap?"":" disabled"}>${yakin?"Yakin? Ketuk lagi untuk menghapus":"Hapus dari HP"}</button>
-    ${lap?"":`<p class="small muted">Laporkan ke pemilik dulu, baru nota ini bisa dihapus dari HP.</p>`}`
+    ${lap||!linkLaporWa("x")?"":`<p class="small muted">Laporkan ke pemilik dulu, baru nota ini bisa dihapus dari HP.</p>`}`
    :`<p class="antre">Belum terkirim. Akan terkirim otomatis saat ada internet.</p>`}</section>`}
 async function muatFoto(n){if(N.fotoMuat===n.id)return;N.fotoMuat=n.id;let url=null;
   try{const r=await S.sb.storage.from("bukti").createSignedUrl(n.photo_path,300);if(!r.error&&r.data)url=r.data.signedUrl}catch(e){}
@@ -462,7 +465,7 @@ function renderBilah(){const b=$("bilah");if(!S.user){b.hidden=true;return}
   b.innerHTML=`<p><span class="titik" aria-hidden="true"></span>${on?"Online":"Offline"}${n?` · ${n} nota menunggu`:""}</p>
   ${lain?`<p class="small">${lain} nota milik kasir lain menunggu. Terkirim saat kasir itu masuk di HP ini.</p>`:""}
   ${gagal.map(it=>`<div class="gagal"><p class="small">Nota ${esc(rp(it.payload&&it.payload.total))} ditolak server: ${esc(it.error)}</p>
-    <a class="btn sm" data-lapor="${esc(it.id)}" target="_blank" rel="noopener" href="${esc(linkLapor(it))}">Laporkan ke pemilik</a></div>`).join("")}`}
+    ${linkLapor(it)?`<a class="btn sm" data-lapor="${esc(it.id)}" target="_blank" rel="noopener" href="${esc(linkLapor(it))}">Laporkan ke pemilik</a>`:""}</div>`).join("")}`}
 function ubahSinyal(){renderBilah();if(S.screen==="jual"&&J.tahap==="bayar"&&!J.sibuk)render()}
 addEventListener("online",()=>{ubahSinyal();kirimAntrean()});
 addEventListener("offline",ubahSinyal);

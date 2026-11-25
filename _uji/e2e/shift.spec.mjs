@@ -67,6 +67,10 @@ test("buka-jual-serah terima-terima", () => lingkungan(async ({ server, browser,
   assert.match(s.rows[0].close_photo, /^[0-9a-f-]{36}\/laci-\d+-[0-9a-f]{8}\.jpg$/);
   const f = await sql.query("select (metadata->>'size')::int as n from storage.objects where name = $1", [s.rows[0].close_photo]);
   assert.ok(f.rows[0].n > 1000 && f.rows[0].n <= 40 * 1024);
+  // muat ulang: kasir yang menyerahkan melihat kartu menunggu, bukan form terima
+  await a.page.reload();
+  await a.page.getByRole("heading", { name: "Laci sudah diserahkan" }).waitFor();
+  assert.equal(await a.page.getByRole("button", { name: "Terima laci" }).count(), 0);
   await a.page.getByRole("button", { name: "Keluar" }).click();
   await a.page.getByRole("button", { name: "Masuk" }).waitFor();
   await a.context.close();
@@ -185,5 +189,28 @@ test("serah terima dan tutup toko ditahan selama ada nota belum terkirim", () =>
   await page.getByText("Masih ada 1 nota belum terkirim. Sambungkan internet dulu.").waitFor();
   assert.equal(await page.getByRole("button", { name: "Tutup toko" }).isDisabled(), true);
   assert.equal(await page.getByRole("button", { name: "Serah terima ke kasir berikutnya" }).isDisabled(), true);
+  await context.close();
+}));
+
+test("nama menu berisi HTML ditampilkan apa adanya", () => lingkungan(async ({ server, browser, sql, foto }) => {
+  const nama = "<img src=x onerror=window.__xss=1>";
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await siapJual(page, buka, server);
+  await sql.query("update pos_items set name = $1 where name = 'Teh Tarik'", [nama]);
+  await page.reload();
+  await page.getByRole("button", { name: nama }).waitFor();
+  await page.getByRole("button", { name: nama }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /14 oz/ }).click();
+  await page.getByRole("button", { name: "Bayar", exact: true }).click();
+  await page.getByRole("button", { name: "Tunai" }).click();
+  await page.getByRole("button", { name: "Uang pas" }).click();
+  await ambilFoto(page, foto);
+  await page.getByRole("button", { name: "Lunas" }).click();
+  await page.locator(".selesai").waitFor();
+  await tab(page, "Nota").click();
+  await page.locator(".nota-baris").first().click();
+  await page.locator("#app").getByText(nama, { exact: false }).waitFor();
+  assert.equal(await page.evaluate(() => window.__xss), undefined);
+  assert.equal(await page.locator("#app img[src='x']").count(), 0);
   await context.close();
 }));

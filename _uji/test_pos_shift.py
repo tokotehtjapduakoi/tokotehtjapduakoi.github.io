@@ -90,9 +90,11 @@ def test_serah_terima(db, laci):
     laci.tutup(laci.a, 130000, True)
     me = json.loads(db.sql("select pos_me('dev1')", sebagai=laci.b)[0][0])
     assert me["shift"] is None
-    assert me["handover_waiting"] == {"shift_id": 1, "cashier_name": "a@x.id"}  # hitungan buta untuk kasir
+    assert me["handover_waiting"] == {"shift_id": 1, "is_mine": False, "cashier_name": "a@x.id"}  # hitungan buta untuk kasir
     own = json.loads(db.sql("select pos_me('dev1')", sebagai=laci.pemilik)[0][0])
-    assert own["handover_waiting"] == {"shift_id": 1, "cashier_name": "a@x.id", "cash_counted": 130000}
+    assert own["handover_waiting"] == {"shift_id": 1, "is_mine": False, "cashier_name": "a@x.id", "cash_counted": 130000}
+    mine = json.loads(db.sql("select pos_me('dev1')", sebagai=laci.a)[0][0])
+    assert mine["handover_waiting"]["is_mine"] is True
     r = laci.terima(laci.b, 125000)
     assert r["selisih"] == -5000 and r["shift"]["cash_start"] == 125000
     assert db.sql("select cashier = '%s', cash_start, received_from from pos_shifts where closed_at is null"

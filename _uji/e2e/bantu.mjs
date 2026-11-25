@@ -52,7 +52,7 @@ export async function bukaHalaman(browser, server) {
   await context.route("**/kasir/config.js", (r) => r.fulfill({
     contentType: "application/javascript",
     body: `window.KASIR_CONFIG=${JSON.stringify({ supabaseUrl: server.url, supabaseKey: "uji-anon",
-      kolamUrl: "https://tokotehtjapduakoi.github.io/kolam/" })};`,
+      kolamUrl: "https://tokotehtjapduakoi.github.io/kolam/", waNomor: "6281345306571" })};`,
   }));
   return { context, page, buka: () => page.goto(server.url + "/kasir/") };
 }

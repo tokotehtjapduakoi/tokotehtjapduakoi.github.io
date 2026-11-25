@@ -380,7 +380,7 @@ begin
   select * into v_shift from pos_shifts where cashier = auth.uid() and closed_at is null
    order by opened_at desc, id desc limit 1;
   select * into v_wait from pos_shifts where closed_at is not null and coalesce(handover, false)
-     and received_at is null limit 1;
+     and received_at is null order by id desc limit 1;
   return jsonb_build_object(
     'role', (select role from kk_staff where user_id = auth.uid()),
     'name', (select name from kk_staff where user_id = auth.uid()),
@@ -389,7 +389,7 @@ begin
     'shift', case when v_shift.id is null then null else jsonb_build_object(
       'id', v_shift.id, 'opened_at', v_shift.opened_at, 'cash_start', v_shift.cash_start) end,
     'handover_waiting', case when v_wait.id is null then null else jsonb_build_object(
-      'shift_id', v_wait.id,
+      'shift_id', v_wait.id, 'is_mine', v_wait.cashier = auth.uid(),
       'cashier_name', (select name from kk_staff where user_id = v_wait.cashier))
       -- hitungan penutup hanya terlihat pemilik; kasir penerima menghitung buta
       || case when kk_is_owner() then jsonb_build_object('cash_counted', v_wait.cash_counted)
