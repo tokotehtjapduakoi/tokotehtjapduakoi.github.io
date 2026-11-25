@@ -66,7 +66,7 @@ const ELN={api:"API",listrik:"LISTRIK",air:"AIR",batu:"BATU",bulan:"BULAN",matah
 const cardHTML=(c,cls,count)=>`<div class="kc ${c.t} ${cls||""}">${art(c)}<span class="tag">${c.t}</span>${c.el?`<span class="el">${ELN[c.el]}</span>`:""}${count>1?`<span class="cnt">×${count}</span>`:""}<span class="nm">${c.nm}</span></div>`;
 
 /* ===== state: dari server + pilihan tampilan di HP ini ===== */
-let sb=null,S=null,phone="",legacy=true,legacyOpen=false,tab="tarik",sel={},lbCat="tukar",queue=[],board=null,busy=false;
+let sb=null,S=null,phone="",legacy=false,legacyOpen=false,tab="tarik",sel={},lbCat="tukar",queue=[],board=null,busy=false;
 const LKEY=()=>"kolamkoi-v1-"+phone;
 const LOCAL=["skin","customBg","avatar","avatarPos","wait"];
 function save(){if(!S)return;const o={};LOCAL.forEach(k=>{if(S[k]!==undefined)o[k]=S[k]});try{localStorage.setItem(LKEY(),JSON.stringify(o))}catch(e){toast("Penyimpanan HP penuh. Foto kolam tidak tersimpan.")}}
@@ -85,8 +85,8 @@ async function loadRules(){try{
   if(k.data)k.data.forEach(x=>{const s=SKINS.find(z=>z.id===x.id);if(s){s.cost=x.cost;s.nm=x.name;s.how="Tukar "+x.cost+" poin"}});
 }catch(e){}}
 
-/* Klaim lama (nomor nota + total) bisa dimatikan pemilik di Admin. Gagal dibaca = anggap masih menyala. */
-async function loadLegacy(){try{const {data,error}=await sb.from("kk_settings").select("legacy_nota_claim").eq("id",1).maybeSingle();if(!error&&data)legacy=!!data.legacy_nota_claim}catch(e){}}
+/* Klaim lama (nomor nota + total) bisa dimatikan pemilik di Admin. Gagal dibaca = dianggap mati. */
+async function loadLegacy(){legacy=false;try{const {data,error}=await sb.from("kk_settings").select("legacy_nota_claim").eq("id",1).maybeSingle();legacy=!error&&!!data&&data.legacy_nota_claim===true}catch(e){}}
 async function loadMe(){const me=await rpc("kk_me");if(!me){S=null;return false}
   await loadLegacy();
   const L=S&&S._phone===me.phone?S:loadLocal();
@@ -111,7 +111,6 @@ function showReveal(){if(!queue.length){render();return}
   f.addEventListener("click",open);f.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open()}});
   b.addEventListener("click",()=>{ov.remove();showReveal()});f.focus()}
 
-
 /* ===== tampilan ===== */
 const ICON={tarik:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/>',kolam:'<path d="M3 12c3-4 6-4 9 0s6 4 9 0M3 17c3-4 6-4 9 0s6 4 9 0M7 7c2-2 4-2 6 0"/>',tukar:'<path d="M4 8h13l-3-3M20 16H7l3 3"/>',peringkat:'<path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0z"/><path d="M7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/>',akun:'<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>'};
 const TABS=[["tarik","Tarik"],["kolam","Kolam"],["tukar","Tukar"],["peringkat","Peringkat"],["akun","Akun"]];
@@ -122,7 +121,7 @@ function header(){return `<div class="head"><h1>Kolam Koi</h1><a class="small mu
  <p class="small">Halo, <b>${esc(S.name)}</b></p>
  <div class="stats"><div class="stat"><b>${totalPts()}</b><span>poin kartu</span></div><div class="stat"><b>${Math.min(distinct(),12)}/12</b><span>koleksi</span></div><div class="stat"><b>${S.exchanged}</b><span>poin ditukar${S.bank?` · saldo ${S.bank}`:""}</span></div></div>`}
 
-function waitRows(){return S.wait.map((w,i)=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><div><b style="font-family:var(--f-mono)">${esc(w.kode||w.nota)}</b>${w.total?`<div class="small muted">${rp(w.total)}</div>`:""}</div><div class="row" style="gap:6px"><button type="button" class="btn sm" data-w="${i}">Cek lagi</button><button type="button" class="btn sm ghost" data-x="${i}" aria-label="Hapus ${esc(w.kode||w.nota)}">Hapus</button></div></div>`).join("")}
+function waitRows(){return S.wait.map((w,i)=>w.nota&&!legacy?"":`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><div><b style="font-family:var(--f-mono)">${esc(w.kode||w.nota)}</b>${w.total?`<div class="small muted">${rp(w.total)}</div>`:""}</div><div class="row" style="gap:6px"><button type="button" class="btn sm" data-w="${i}">Cek lagi</button><button type="button" class="btn sm ghost" data-x="${i}" aria-label="Hapus ${esc(w.kode||w.nota)}">Hapus</button></div></div>`).join("")}
 function vTarik(){const tiers=RULE.pulls.slice().reverse();
   return header()+`<section class="card"><h2>Masukkan kode</h2><p class="small muted">Ketik kode 10 huruf dan angka dari struk atau pesan WhatsApp kasir. Jumlah tarikan otomatis sesuai total belanja.</p>
   <label for="kode">Kode<input id="kode" class="txt" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="11" placeholder="XXXXX-XXXXX"></label>
@@ -132,7 +131,7 @@ function vTarik(){const tiers=RULE.pulls.slice().reverse();
   <label for="tot">Total belanja di struk (Rp)<input id="tot" inputmode="numeric" autocomplete="off" placeholder="0"></label>
   <button class="btn" id="go-lama">Cek nota & tarik</button></div>`:""}
   <table class="tiers">${tiers.map(([m,n])=>`<tr><td>Belanja mulai ${rp(m)}</td><td>${n} tarikan</td></tr>`).join("")}</table></section>
-  ${S.wait.length?`<section class="card"><h2>Belum bisa dipakai</h2><p class="small muted">Toko belum mendaftarkan nota ini, atau notanya sedang diperiksa. Biasanya tercatat beberapa menit setelah bayar. Tarikanmu tidak hilang.</p>${waitRows()}</section>`:""}
+  ${S.wait.some(w=>w.kode||legacy)?`<section class="card"><h2>Belum bisa dipakai</h2><p class="small muted">Toko belum mendaftarkan nota ini, atau notanya sedang diperiksa. Biasanya tercatat beberapa menit setelah bayar. Tarikanmu tidak hilang.</p>${waitRows()}</section>`:""}
   <section class="card"><h2>Peluang</h2><div class="small">Rare 80% · Super Rare 17% · Ultra Rare 3%</div>
   <div class="pity"><div>Super Rare dijamin dalam <b>${Math.max(1,RULE.pitySR-S.pity.sr)}</b> tarikan lagi</div><div class="bar"><i style="width:${S.pity.sr/RULE.pitySR*100}%"></i></div>
   <div>Ultra Rare dijamin dalam <b>${Math.max(1,RULE.pityUR-S.pity.ur)}</b> tarikan lagi</div><div class="bar u"><i style="width:${S.pity.ur/RULE.pityUR*100}%"></i></div></div>
@@ -158,7 +157,7 @@ const MSG_KODE={expired:"Kode sudah kedaluwarsa.",wrong_phone:"Kode ini untuk no
   pending:"Nota sedang diperiksa toko. Coba lagi nanti.",void:"Nota ini dibatalkan.",staff_own:"Kode dari nota yang kamu buat sendiri tidak bisa diklaim.",
   blocked:"Terlalu banyak percobaan salah hari ini. Coba lagi besok, atau tanyakan ke kasir."};
 async function claimCode(kode){kode=fmtKode(kode);
-  if(kode.length!==11)return toast("Kode terdiri dari 10 huruf dan angka, contoh ABCDE-23456.");if(busy)return;busy=true;
+  if(kode.length!==11){toast("Kode terdiri dari 10 huruf dan angka, contoh ABCDE-23456.");return true}if(busy)return true;busy=true;
   const go=$("go");if(go){go.disabled=true;go.textContent="Mengecek kode..."}
   try{const r=await rpc("kk_claim_code",{p_code:kode});
     const drop=()=>{S.wait=S.wait.filter(w=>w.kode!==kode)};
@@ -170,16 +169,21 @@ async function claimCode(kode){kode=fmtKode(kode);
     else if(r.status==="too_small"){drop();save();render();toast(`Belanja ${rp(r.total)} belum cukup untuk tarikan (minimal ${rp(RULE.pulls[RULE.pulls.length-1][0])}).`)}
     else if(MSG_KODE[r.status]){if(r.status!=="blocked")drop();save();render();toast(MSG_KODE[r.status])}
     else{render();toast("Kode belum bisa dipakai. Coba lagi nanti.")}
-  }catch(e){toast(errMsg(e));render()}finally{busy=false}}
+    return true
+  }catch(e){toast(errMsg(e));render();return false}finally{busy=false}}
 
 /* ?kode= dari tautan WhatsApp: disimpan di sessionStorage dan dibuang dari URL; diklaim begitu member sudah masuk. */
 const KKEY="kolamkoi-kode";
 function simpanKodeUrl(){try{const u=new URL(location.href),k=u.searchParams.get("kode");if(k===null)return;
-  const f=fmtKode(k);if(f.length===11)sessionStorage.setItem(KKEY,f);
+  const f=fmtKode(k);if(f.length===11)sessionStorage.setItem(KKEY,f);else setTimeout(()=>toast("Kode di tautan tidak lengkap. Ketik kodenya sendiri di bawah."),300);
   u.searchParams.delete("kode");history.replaceState(null,"",u.pathname+(u.search||"")+u.hash)}catch(e){}}
 const kodeTertunda=()=>{try{return sessionStorage.getItem(KKEY)||""}catch(e){return ""}};
 function lupakanKode(){try{sessionStorage.removeItem(KKEY)}catch(e){}}
-async function klaimTertunda(){const k=kodeTertunda();if(!k||!S)return;lupakanKode();tab="tarik";render();await claimCode(k)}
+/* Kode tertunda dihapus hanya setelah server menjawab (status apa pun). Gagal jaringan atau sibuk: masuk daftar tunggu supaya bisa "Cek lagi". */
+async function klaimTertunda(){const k=kodeTertunda();if(!k||!S)return;tab="tarik";
+  if(busy){tunggu(k);return}
+  lupakanKode();render();if(!(await claimCode(k)))tunggu(k)}
+function tunggu(k){if(!S.wait.some(w=>w.kode===k))S.wait.push({kode:k});save();render()}
 function bindTarik(){const k=$("kode");k.oninput=()=>{k.value=fmtKode(k.value)};
   k.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();claimCode(k.value)}};
   $("go").onclick=()=>claimCode(k.value);
@@ -188,8 +192,6 @@ function bindTarik(){const k=$("kode");k.oninput=()=>{k.value=fmtKode(k.value)};
     $("go-lama").onclick=()=>claim($("nota").value,$("tot").value)}
   document.querySelectorAll("[data-w]").forEach(b=>b.onclick=()=>{const w=S.wait[+b.dataset.w];if(!w)return;if(w.kode)claimCode(w.kode);else claim(w.nota,w.total)});
   document.querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>{S.wait.splice(+b.dataset.x,1);save();render()})}
-
-
 
 function vKolam(){const all=[...CARDS,...(S.ever.includes("tjap")?[SECRET]:[])];
   const sec=t=>{const list=all.filter(c=>c.t===t);return `<h3 style="margin-top:4px">${t==="R"?"Rare":t==="SR"?"Super Rare":"Ultra Rare"} <span class="small muted">· ${RULE.pts[t]} poin</span></h3><div class="grid">${list.map(c=>{const n=S.inv[c.id]||0,ever=S.ever.includes(c.id);return cardHTML(c,n?"":ever?"past":"none",n)}).join("")}</div>`};
@@ -373,9 +375,9 @@ function render(){nav();if(!sb){$("app").innerHTML=vClosed();return}
   ({tarik:bindTarik,tukar:bindTukar,peringkat:bindPeringkat,akun:bindAkun,kolam:startPond}[tab]||(()=>{}))()}
 
 async function boot(){
+  simpanKodeUrl();
   if(!CFG.supabaseUrl||!CFG.supabaseKey||!window.supabase){render();return}
   sb=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"kolamkoi-auth"}});
-  simpanKodeUrl();
   $("app").innerHTML=`<p class="muted" style="text-align:center;padding:40px 0">Membuka kolam...</p>`;
   await loadRules();
   try{const {data}=await sb.auth.getSession();const em=data.session&&data.session.user.email||"";

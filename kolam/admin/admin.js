@@ -32,7 +32,7 @@ function head(){return `<div class="head"><h1>Admin Kolam Koi</h1><button type="
 const mf0=()=>({tahap:null,faktor:null,enroll:null,kode:"",pesan:"",sibuk:false});
 let mf=mf0();
 async function muatMfa(){if(mf.tahap)return;mf.tahap="memuat";
-  try{mf.faktor=await KoiMfa.faktor(sb);mf.tahap=mf.faktor?"kode":"belum"}catch(e){mf.tahap=null;mf.pesan=errMsg(e)}
+  try{mf.faktor=await KoiMfa.faktor(sb);mf.tahap=mf.faktor?"kode":"belum"}catch(e){mf.tahap="galat";mf.pesan=errMsg(e)}
   render()}
 async function mulaiDaftar(){if(mf.sibuk)return;mf.sibuk=true;mf.pesan="";render();
   try{mf.enroll=await KoiMfa.daftar(sb,"Admin Kolam");mf.tahap="daftar"}catch(e){mf.pesan=errMsg(e)}
@@ -53,7 +53,7 @@ function vMfa(){const pesan=`<p class="err small" role="alert">${esc(mf.pesan)}<
   if(mf.tahap==="kode")return `<section class="card">${kepala}<p class="small muted">Menu pemilik (Nota, reset PIN, Staf) butuh kode dari aplikasi autentikator.</p>${kode}</section>`;
   if(mf.tahap==="belum")return `<section class="card">${kepala}<p class="small muted">Menu pemilik (Nota, reset PIN, Staf) wajib memakai verifikasi 2 langkah. Pasang sekali saja.</p>${pesan}
     <button type="button" class="btn" id="mfa-daftar"${mf.sibuk?" disabled":""}>Pasang verifikasi 2 langkah</button></section>`;
-  return `<section class="card">${kepala}<p class="small muted">${mf.tahap==="memuat"?"Memeriksa...":"Belum bisa memeriksa verifikasi."}</p>${mf.tahap?"":pesan+`<button type="button" class="btn" id="mfa-ulang">Coba lagi</button>`}</section>`}
+  return `<section class="card">${kepala}<p class="small muted">${mf.tahap==="memuat"?"Memeriksa...":"Belum bisa memeriksa verifikasi."}</p>${mf.tahap==="galat"?pesan+`<button type="button" class="btn" id="mfa-ulang">Coba lagi</button>`:""}</section>`}
 function bindMfa(){const k=$("mfa-kode");
   if(k){k.oninput=()=>{mf.kode=k.value.replace(/\D/g,"").slice(0,6);k.value=mf.kode;$("mfa-kirim").disabled=mf.kode.length!==6||mf.sibuk};k.focus()}
   const b=$("mfa-kirim");if(b)b.onclick=kirimKode;
@@ -62,7 +62,7 @@ function bindMfa(){const k=$("mfa-kode");
 
 /* ---------- Nota ---------- */
 let recent=null,legacyOn=null;
-async function vNota(){if(legacyOn===null)legacyOn=(await q(sb.from("kk_settings").select("legacy_nota_claim").eq("id",1).maybeSingle())||{}).legacy_nota_claim!==false;
+async function vNota(){if(legacyOn===null)legacyOn=((await q(sb.from("kk_settings").select("legacy_nota_claim").eq("id",1).maybeSingle()))||{}).legacy_nota_claim===true;
   recent=recent||await q(sb.from("kk_receipts").select("nota,total,created_at,claimed_at").order("created_at",{ascending:false}).limit(60));
   return head()+`<section class="card"><h2>Klaim nomor nota lama (ESB)</h2><p class="small muted">Bila menyala, pelanggan masih bisa memasukkan nomor nota ESB + total di Kolam Koi. Matikan bila semua nota sudah lewat kasir baru (kode klaim).</p>
   <label class="row" for="lg" style="justify-content:flex-start;gap:10px"><input id="lg" type="checkbox"${legacyOn?" checked":""}><span>Klaim nomor nota lama (ESB)</span></label></section>

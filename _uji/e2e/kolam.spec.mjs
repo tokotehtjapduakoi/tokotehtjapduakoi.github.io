@@ -189,3 +189,75 @@ test("pemilik tanpa 2 langkah di admin: daftar TOTP lewat KoiMfa, lalu tab Nota 
   assert.equal(await page.getByRole("heading", { name: "Verifikasi 2 langkah" }).count(), 0);
   await context.close();
 }));
+
+test("pemilik tanpa 2 langkah: gagal memeriksa faktor tidak mengulang terus, Coba lagi jalan", () => lingkungan(async ({ server, browser, sql }) => {
+  await sql.query("update auth.users set email = 'bos@uji.id' where email = 'pemilik@uji.id'");
+  const h = await bukaHalaman(browser, server);
+  const { context, page } = h;
+  let gagal = 0, panggilan = 0, aktif = false;
+  await context.route("**/auth/v1/user", (r) => {
+    if (!aktif) return r.continue();
+    panggilan++;
+    if (gagal < 1) { gagal++; return r.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "galat uji" }) }); }
+    return r.continue();
+  });
+  await buka(h, server, "/kolam/admin/");
+  aktif = true;
+  await masuk(page, "bos@uji.id");
+  const ulang = page.getByRole("button", { name: "Coba lagi" });
+  await ulang.waitFor();
+  await page.waitForTimeout(1500);
+  assert.equal(panggilan, 1, "tidak mengulang sendiri");
+  await ulang.click();
+  await page.getByRole("button", { name: "Pasang verifikasi 2 langkah" }).waitFor();
+  assert.equal(panggilan, 2);
+  await context.close();
+}));
+
+test("kode dari link: jaringan putus -> daftar tunggu -> Cek lagi berhasil, dan tidak diklaim dua kali", () => lingkungan(async ({ server, browser, sql }) => {
+  await buatNota(sql);
+  const h = await bukaHalaman(browser, server);
+  let putus = true;
+  await h.context.route("**/rest/v1/rpc/kk_claim_code", (r) => { if (putus) { putus = false; return r.abort(); } return r.continue(); });
+  await buka(h, server, `/kolam/?kode=${KODE}`);
+  await daftarMember(h.page, "081234567890");
+  await h.page.getByRole("heading", { name: "Belum bisa dipakai" }).waitFor();
+  await h.page.getByText(KODE).waitFor();
+  assert.equal((await sql.query("select count(*)::int n from kk_pulls")).rows[0].n, 0);
+  await h.page.getByRole("button", { name: "Cek lagi" }).click();
+  await h.page.getByRole("dialog", { name: "Hasil tarikan" }).waitFor();
+  const n = (await sql.query("select count(*)::int n from kk_pulls")).rows[0].n;
+  assert.equal(n, 2);
+  await h.page.reload();
+  await h.page.getByRole("heading", { name: "Masukkan kode" }).waitFor();
+  await h.page.waitForTimeout(1000);
+  assert.equal((await sql.query("select count(*)::int n from kk_pulls")).rows[0].n, n, "tidak diklaim ulang");
+  assert.equal(await h.page.getByRole("dialog").count(), 0);
+  await h.context.close();
+}));
+
+test("klaim lama mati: tidak ada tautan dan baris tunggu bergaya nota disembunyikan", () => lingkungan(async ({ server, browser, sql }) => {
+  await sql.query("update kk_settings set legacy_nota_claim = false");
+  const h = await bukaHalaman(browser, server);
+  await buka(h, server, "/kolam/");
+  await daftarMember(h.page, "081234567890");
+  await h.page.getByRole("heading", { name: "Masukkan kode" }).waitFor();
+  await h.page.evaluate(() => localStorage.setItem("kolamkoi-v1-6281234567890", JSON.stringify({ wait: [{ nota: "NOTA-LAMA", total: 30000 }] })));
+  await h.page.reload();
+  await h.page.getByRole("heading", { name: "Masukkan kode" }).waitFor();
+  assert.equal(await h.page.getByRole("link", { name: /Punya nota lama/ }).count(), 0);
+  assert.equal(await h.page.getByLabel("Nomor nota").count(), 0);
+  assert.equal(await h.page.getByText("NOTA-LAMA").count(), 0);
+  await h.context.close();
+}));
+
+test("admin: baris kk_settings tidak ada = sakelar klaim lama mati", () => lingkungan(async ({ server, browser, sql }) => {
+  await sql.query("delete from kk_settings");
+  const h = await bukaHalaman(browser, server);
+  await buka(h, server, "/kolam/admin/");
+  await masuk(h.page, "pemilik@uji.id");
+  const lg = h.page.getByLabel("Klaim nomor nota lama (ESB)");
+  await lg.waitFor();
+  assert.equal(await lg.isChecked(), false);
+  await h.context.close();
+}));

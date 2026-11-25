@@ -103,7 +103,9 @@ def test_laporan_offline_selisih_tahan_dan_diskon(db, toko):
     toko.checkout(toko.payload(code="AAAAA22222"))
     db.sql("update pos_price_history set valid_from = now() - interval '1 hour'")
     db.sql(f"select pos_variant_save('{{\"id\":{toko.vid},\"price\":16000}}')", sebagai=toko.pemilik)
-    ts = db.sql("select now() - interval '30 minutes'")[0][0]
+    # 30 menit lalu, tetapi tidak melewati tengah malam WITA (supaya tetap masuk laporan hari ini)
+    ts = db.sql("select now() - least(interval '30 minutes', (now() - (date_trunc('day', now() at time zone 'Asia/Makassar') "
+                "at time zone 'Asia/Makassar')) / 2)")[0][0]
     toko.checkout(toko.payload(code="AAAAA33333", offline=True, client_at=ts, total=28000, cash_received=30000,
                                lines=[{"variant_id": toko.vid, "qty": 2}]))
     r = laporan(db, toko.pemilik)
