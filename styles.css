@@ -442,6 +442,8 @@ body { padding-bottom: 76px; }
 .musik__eq i:nth-child(3) { animation-delay: -.6s; }
 @keyframes eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
 .musik.is-nyala .musik__tombol { background: var(--marun); }
+.musik.is-memuat .musik__ikon { animation: denyut 1s ease-in-out infinite; }
+@keyframes denyut { 50% { opacity: .45; } }
 .musik.is-nyala .ikon-main { display: none; }
 .musik.is-nyala .musik__eq { display: flex; }
 @media (prefers-reduced-motion: reduce) {

@@ -44,14 +44,14 @@ window.KOI_CONFIG = {
 
   /* ---------- Musik ----------
      tampil : true = tombol musik muncul di pojok kanan bawah, false = disembunyikan.
-     file   : kosongkan ("") untuk memakai musik orisinal bawaan "Teh Tarik Sore"
-              (dimainkan langsung oleh browser, tanpa file, jadi ringan).
-              Kalau punya lagu sendiri yang BOLEH dipakai (bukan lagu orang lain tanpa izin),
-              unggah file MP3-nya ke repo lalu tulis namanya, misalnya "musik.mp3".
-     judul  : nama lagu yang muncul saat tombol ditekan lama / diarahkan kursor. */
+     file   : lagu yang diputar. Bawaan: lagu orisinal "Teh Tarik Sore" (bebas hak cipta).
+              Mau ganti lagu sendiri yang BOLEH dipakai? Unggah file MP3-nya ke folder
+              assets/ lalu tulis namanya, misalnya "assets/lagu-saya.mp3".
+              Usahakan file kecil (di bawah 1 MB) supaya cepat diputar di sinyal lemah.
+     judul  : nama lagu (muncul di tombol dan di layar kunci HP). */
   musik: {
     tampil: true,
-    file: "",
+    file: "assets/musik-teh-tarik-sore.mp3",
     judul: "Teh Tarik Sore"
   },
 
