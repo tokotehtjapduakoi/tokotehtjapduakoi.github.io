@@ -67,6 +67,9 @@ create table if not exists public.kk_members(
   created_at timestamptz not null default now()
 );
 
+-- Nomor HP staf (format 62...), dipakai untuk menolak staf mengklaim nota buatannya sendiri.
+alter table public.kk_staff add column if not exists phone text;
+
 -- ---------- Transaksi ----------
 create table if not exists public.kk_receipts(
   nota text primary key,
@@ -76,6 +79,21 @@ create table if not exists public.kk_receipts(
   claimed_by uuid references public.kk_members(user_id) on delete set null,
   claimed_at timestamptz
 );
+
+-- Kolom untuk nota POS: kode klaim acak (hanya hash-nya yang disimpan), terikat nomor, masa berlaku, void, tahan.
+alter table public.kk_receipts add column if not exists code_hash text unique;
+alter table public.kk_receipts add column if not exists bound_phone text;
+alter table public.kk_receipts add column if not exists expires_at timestamptz;
+alter table public.kk_receipts add column if not exists voided_at timestamptz;
+alter table public.kk_receipts add column if not exists pos_nota_id uuid;
+alter table public.kk_receipts add column if not exists held boolean not null default false;
+
+-- Pengaturan (satu baris). legacy_nota_claim: klaim lama lewat nomor nota + total.
+create table if not exists public.kk_settings(
+  id integer primary key default 1 check (id = 1),
+  legacy_nota_claim boolean not null default true
+);
+insert into public.kk_settings(id) values (1) on conflict do nothing;
 
 create table if not exists public.kk_inventory(
   member_id uuid not null references public.kk_members(user_id) on delete cascade,
@@ -127,6 +145,7 @@ alter table public.kk_inventory enable row level security;
 alter table public.kk_collection enable row level security;
 alter table public.kk_pulls enable row level security;
 alter table public.kk_exchanges enable row level security;
+alter table public.kk_settings enable row level security;
 
 create or replace function public.kk_is_staff() returns boolean
 language sql stable security definer set search_path = public as
@@ -135,6 +154,11 @@ $$ select exists(select 1 from kk_staff where user_id = auth.uid()) $$;
 create or replace function public.kk_is_owner() returns boolean
 language sql stable security definer set search_path = public as
 $$ select exists(select 1 from kk_staff where user_id = auth.uid() and role = 'pemilik') $$;
+
+-- Pemilik DAN login 2 langkah (aal2). Dipakai semua fungsi khusus pemilik.
+create or replace function public.kk_owner_mfa() returns boolean
+language sql stable security definer set search_path = public as
+$$ select public.kk_is_owner() and coalesce(auth.jwt()->>'aal', '') = 'aal2' $$;
 
 do $$
 declare t text;
@@ -156,6 +180,8 @@ drop policy if exists baca on public.kk_receipts;
 create policy baca on public.kk_receipts for select using (public.kk_is_staff());
 drop policy if exists baca on public.kk_staff;
 create policy baca on public.kk_staff for select using (user_id = auth.uid() or public.kk_is_owner());
+drop policy if exists baca on public.kk_settings;
+create policy baca on public.kk_settings for select to authenticated using (true);
 -- Tidak ada policy insert/update/delete: semua perubahan lewat fungsi di bawah.
 
 -- ---------- Member baru otomatis dibuat saat daftar ----------
@@ -203,28 +229,17 @@ begin
 end $$;
 
 -- ---------- Tarik kartu dari nota ----------
-create or replace function public.kk_claim(p_nota text, p_total integer) returns jsonb
+-- Undian dipakai bersama oleh kk_claim (nota lama) dan kk_claim_code (kode POS).
+-- Hanya dipanggil dari fungsi lain; tidak di-grant ke klien. Pemanggil sudah
+-- mengunci baris member dan memeriksa nota (ada, belum diklaim, boleh diklaim).
+create or replace function public.kk__draw(p_member uuid, p_receipt text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   m kk_members; r kk_receipts; n integer; t text; x float8; c text;
-  cards text[] := '{}'; v_secret boolean := false; v_nota text := upper(trim(p_nota));
+  cards text[] := '{}'; v_secret boolean := false;
 begin
-  select * into m from kk_members where user_id = auth.uid() for update;
-  if not found then raise exception 'Masuk sebagai member dulu'; end if;
-  if m.fail_day is distinct from current_date then m.fails := 0; end if;
-  if m.fails >= 10 then
-    return jsonb_build_object('status', 'blocked');
-  end if;
-  if v_nota = '' or p_total is null then return jsonb_build_object('status', 'not_found'); end if;
-
-  select * into r from kk_receipts where kk_receipts.nota = v_nota for update;
-  if not found or r.total <> p_total then
-    update kk_members set fails = m.fails + 1, fail_day = current_date where user_id = m.user_id;
-    return jsonb_build_object('status', 'not_found', 'left', 9 - m.fails);
-  end if;
-  if r.claimed_by is not null then
-    return jsonb_build_object('status', 'used', 'mine', r.claimed_by = m.user_id);
-  end if;
+  select * into m from kk_members where user_id = p_member for update;
+  select * into r from kk_receipts where kk_receipts.nota = p_receipt for update;
 
   select pulls into n from kk_tiers where min_total <= r.total order by min_total desc limit 1;
   update kk_receipts set claimed_by = m.user_id, claimed_at = now() where kk_receipts.nota = r.nota;
@@ -264,6 +279,76 @@ begin
          fails = 0, fail_day = current_date
    where user_id = m.user_id;
   return jsonb_build_object('status', 'ok', 'total', r.total, 'pulls', n, 'cards', to_jsonb(cards), 'secret', v_secret);
+end $$;
+
+create or replace function public.kk_claim(p_nota text, p_total integer) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  m kk_members; r kk_receipts; v_nota text := upper(trim(p_nota));
+begin
+  select * into m from kk_members where user_id = auth.uid() for update;
+  if not found then raise exception 'Masuk sebagai member dulu'; end if;
+  if m.fail_day is distinct from current_date then m.fails := 0; end if;
+  if m.fails >= 10 then
+    return jsonb_build_object('status', 'blocked');
+  end if;
+  if v_nota = '' or p_total is null then return jsonb_build_object('status', 'not_found'); end if;
+  -- klaim lama dimatikan pemilik: tolak tanpa menambah percobaan gagal
+  if not (select legacy_nota_claim from kk_settings where id = 1) then
+    return jsonb_build_object('status', 'not_found');
+  end if;
+
+  select * into r from kk_receipts where kk_receipts.nota = v_nota for update;
+  if found and (r.code_hash is not null or r.voided_at is not null or r.held) then
+    -- nota POS hanya bisa diklaim lewat kode (kk_claim_code)
+    return jsonb_build_object('status', 'not_found');
+  end if;
+  if not found or r.total <> p_total then
+    update kk_members set fails = m.fails + 1, fail_day = current_date where user_id = m.user_id;
+    return jsonb_build_object('status', 'not_found', 'left', 9 - m.fails);
+  end if;
+  if r.claimed_by is not null then
+    return jsonb_build_object('status', 'used', 'mine', r.claimed_by = m.user_id);
+  end if;
+  return kk__draw(m.user_id, r.nota);
+end $$;
+
+-- Klaim dengan kode acak 10 karakter (XXXXX-XXXXX) dari struk POS.
+create or replace function public.kk_claim_code(p_code text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  m kk_members; r kk_receipts; v_code text := regexp_replace(upper(coalesce(p_code, '')), '[^A-Z0-9]', '', 'g');
+begin
+  select * into m from kk_members where user_id = auth.uid() for update;
+  if not found then raise exception 'Masuk sebagai member dulu'; end if;
+  if m.fail_day is distinct from current_date then m.fails := 0; end if;
+  if m.fails >= 10 then
+    return jsonb_build_object('status', 'blocked');
+  end if;
+
+  -- kode salah format (termasuk huruf O/I/L atau angka 0/1) tidak akan pernah cocok: salah biasa
+  select * into r from kk_receipts
+   where code_hash = encode(extensions.digest(v_code, 'sha256'), 'hex')
+     and v_code ~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$'
+   for update;
+  if not found then
+    update kk_members set fails = m.fails + 1, fail_day = current_date where user_id = m.user_id;
+    return jsonb_build_object('status', 'not_found', 'left', 9 - m.fails);
+  end if;
+  if r.voided_at is not null then return jsonb_build_object('status', 'void'); end if;
+  if r.held then return jsonb_build_object('status', 'pending'); end if;
+  if r.claimed_by is not null then
+    return jsonb_build_object('status', 'used', 'mine', r.claimed_by = m.user_id);
+  end if;
+  if r.expires_at is not null and r.expires_at < now() then return jsonb_build_object('status', 'expired'); end if;
+  if r.bound_phone is not null and r.bound_phone <> m.phone then
+    update kk_members set fails = m.fails + 1, fail_day = current_date where user_id = m.user_id;
+    return jsonb_build_object('status', 'wrong_phone', 'left', 9 - m.fails);
+  end if;
+  if exists (select 1 from kk_staff where user_id = r.created_by and phone = m.phone) then
+    return jsonb_build_object('status', 'staff_own');
+  end if;
+  return kk__draw(m.user_id, r.nota);
 end $$;
 
 -- ---------- Tukar kartu ----------
@@ -355,7 +440,7 @@ end $$;
 create or replace function public.kk_add_receipt(p_nota text, p_total integer) returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
   if coalesce(trim(p_nota), '') = '' then raise exception 'Isi nomor nota'; end if;
   if coalesce(p_total, 0) <= 0 then raise exception 'Isi total belanja'; end if;
   insert into kk_receipts(nota, total, created_by) values (upper(trim(p_nota)), p_total, auth.uid());
@@ -368,7 +453,7 @@ create or replace function public.kk_add_receipts(p_rows jsonb) returns integer
 language plpgsql security definer set search_path = public as $$
 declare n integer;
 begin
-  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
   with ins as (
     insert into kk_receipts(nota, total, created_by)
     select upper(trim(r->>'nota')), (r->>'total')::int, auth.uid()
@@ -382,7 +467,7 @@ end $$;
 create or replace function public.kk_delete_receipt(p_nota text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
   delete from kk_receipts where nota = upper(trim(p_nota)) and claimed_by is null;
   if not found then raise exception 'Nota tidak ada atau sudah diklaim'; end if;
 end $$;
@@ -412,7 +497,7 @@ end $$;
 create or replace function public.kk_reset_pin(p_phone text, p_pin text) returns void
 language plpgsql security definer set search_path = public, extensions as $$
 begin
-  if not kk_is_owner() then raise exception 'Khusus pemilik'; end if;
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
   if p_pin !~ '^[0-9]{6}$' then raise exception 'PIN harus 6 angka'; end if;
   update auth.users set encrypted_password = extensions.crypt(p_pin, extensions.gen_salt('bf')), updated_at = now()
    where email = p_phone || '@member.tjapduakoi.id';
@@ -420,19 +505,32 @@ begin
 end $$;
 
 -- Jadikan akun email sebagai kasir/pemilik (khusus pemilik). Akunnya harus sudah daftar di halaman admin.
-create or replace function public.kk_set_staff(p_email text, p_role text, p_name text default '') returns void
+-- Signature lama (3 argumen) dibuang dulu supaya tidak ada dua versi.
+drop function if exists public.kk_set_staff(text, text, text);
+-- p_phone: nomor HP staf (62...). null = biarkan nomor lama; '' = hapus nomor.
+create or replace function public.kk_set_staff(p_email text, p_role text, p_name text default '', p_phone text default null) returns void
 language plpgsql security definer set search_path = public as $$
-declare uid uuid;
+declare uid uuid; v_phone text := nullif(trim(p_phone), '');
 begin
-  if not kk_is_owner() then raise exception 'Khusus pemilik'; end if;
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  if v_phone is not null and v_phone !~ '^62[0-9]{8,13}$' then raise exception 'Nomor HP harus diawali 62'; end if;
   select id into uid from auth.users where lower(email) = lower(trim(p_email));
   if uid is null then raise exception 'Akun % belum daftar di halaman admin', p_email; end if;
   if p_role is null then
     if uid = auth.uid() then raise exception 'Tidak bisa menghapus diri sendiri'; end if;
     delete from kk_staff where user_id = uid; return;
   end if;
-  insert into kk_staff(user_id, role, name) values (uid, p_role, coalesce(p_name, ''))
-    on conflict (user_id) do update set role = excluded.role, name = excluded.name;
+  insert into kk_staff(user_id, role, name, phone) values (uid, p_role, coalesce(p_name, ''), v_phone)
+    on conflict (user_id) do update set role = excluded.role, name = excluded.name,
+      phone = case when p_phone is null then kk_staff.phone else excluded.phone end;
+end $$;
+
+-- Nyalakan/matikan klaim lama lewat nomor nota + total (khusus pemilik + 2 langkah)
+create or replace function public.kk_set_legacy_claim(p_on boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  update kk_settings set legacy_nota_claim = coalesce(p_on, true) where id = 1;
 end $$;
 
 -- Ringkasan untuk halaman admin
@@ -447,7 +545,8 @@ begin
     'receipts_today', (select count(*) from kk_receipts where created_at >= a),
     'claimed_today', (select count(*) from kk_receipts where claimed_at >= a),
     'vouchers_open', (select count(*) from kk_exchanges where kind = 'hadiah' and used_at is null),
-    'role', (select role from kk_staff where user_id = auth.uid())
+    'role', (select role from kk_staff where user_id = auth.uid()),
+    'mfa', coalesce(auth.jwt()->>'aal', '') = 'aal2'
   );
 end $$;
 
@@ -456,9 +555,11 @@ revoke execute on all functions in schema public from public, anon, authenticate
 grant execute on function public.kk_me(), public.kk_update_profile(text, boolean), public.kk_claim(text, integer),
   public.kk_exchange(jsonb, text), public.kk_add_receipt(text, integer), public.kk_add_receipts(jsonb),
   public.kk_delete_receipt(text), public.kk_check_voucher(text), public.kk_use_voucher(text),
-  public.kk_reset_pin(text, text), public.kk_set_staff(text, text, text), public.kk_admin_summary(),
-  public.kk_is_staff(), public.kk_is_owner()
+  public.kk_reset_pin(text, text), public.kk_set_staff(text, text, text, text), public.kk_admin_summary(),
+  public.kk_is_staff(), public.kk_is_owner(), public.kk_owner_mfa(),
+  public.kk_claim_code(text), public.kk_set_legacy_claim(boolean)
   to authenticated;
+-- kk__draw sengaja tidak di-grant: hanya dipanggil dari kk_claim / kk_claim_code.
 grant execute on function public.kk_board(date) to anon, authenticated;
 
 -- ---------- Izin baca tabel ----------
@@ -467,5 +568,6 @@ grant execute on function public.kk_board(date) to anon, authenticated;
 -- perubahan data tetap lewat fungsi.
 grant usage on schema public to anon, authenticated;
 grant select on public.kk_cards, public.kk_tiers, public.kk_rewards, public.kk_skins to anon, authenticated;
+revoke all on public.kk_settings from anon, authenticated;
 grant select on public.kk_staff, public.kk_members, public.kk_receipts, public.kk_inventory,
-  public.kk_collection, public.kk_pulls, public.kk_exchanges to authenticated;
+  public.kk_collection, public.kk_pulls, public.kk_exchanges, public.kk_settings to authenticated;
