@@ -27,7 +27,9 @@ class Toko:
         self.qris = int(db.sql("select id from pos_pay_methods where kind='qris'")[0][0])
 
     def buka_shift(self, kasir):
-        self.db.sql(f"insert into pos_shifts(cashier, device, cash_start) values ('{kasir['sub']}', 'dev1', 0)")
+        """Buka shift lewat pos_shift_open; shift yang masih terbuka ditutup dulu (satu laci)."""
+        self.db.sql("update pos_shifts set closed_at = now(), handover = false where closed_at is null")
+        self.db.sql("select pos_shift_open('dev1', 0)", sebagai=kasir)
 
     def foto(self, kasir, nama):
         self.db.sql(f"insert into storage.objects(bucket_id, name) values ('bukti', $n${nama}$n$)", sebagai=kasir)
@@ -89,7 +91,7 @@ def test_checkout_idempoten(db, toko):
     assert db.sql("select count(*) from kk_receipts") == [("1",)]
     # kasir lain tidak bisa memakai id yang sama
     lain = db.user("lain@x.id", peran="kasir")
-    toko.buka_shift(lain)
+    toko.buka_shift(lain)  # shift kasir pertama ditutup; id nota tetap milik kasir pertama
     toko.ditolak({**p, "photo_path": toko.foto(lain, f"{lain['sub']}/x.jpg")}, "ID nota sudah dipakai", lain)
 
 
@@ -222,7 +224,7 @@ def test_nota_terkunci(db, toko):
         "and has_function_privilege('authenticated', p.oid, 'execute')")}
     assert klien == {"pos_device_request", "pos_devices_list", "pos_device_decide", "pos_catalog", "pos_item_save",
                      "pos_variant_save", "pos_method_save", "pos_discount_save", "pos_me", "pos_checkout",
-                     "pos_my_notas"}
+                     "pos_my_notas", "pos_shift_open", "pos_shift_close", "pos_shift_receive"}
 
 
 def voucher(db, kode="TK-ABCDE"):
@@ -290,14 +292,15 @@ def test_kasir_saja(db, toko):
 def test_nota_shift_saya(db, toko):
     a = toko.checkout(toko.payload())
     b = toko.checkout(toko.payload(code="ABCDE23457", method_id=toko.qris, cash_received=None))
-    lain = db.user("lain@x.id", peran="kasir")
-    toko.buka_shift(lain)
-    toko.checkout(toko.payload(kasir=lain, code="ABCDE23458"), lain)
     rows = json.loads(db.sql("select pos_my_notas()", sebagai=toko.kasir)[0][0])
     assert [x["no"] for x in rows] == [b["no"], a["no"]]
     assert rows[0]["method"] == "QRIS" and rows[0]["total"] == 30000 and rows[0]["status"] == "lunas"
     assert rows[0]["has_void_request"] is False
-    db.sql(f"update pos_shifts set closed_at = now() where cashier = '{toko.kasir['sub']}'")
+    # shift berikutnya (kasir lain) hanya melihat notanya sendiri; shift kasir pertama sudah tertutup
+    lain = db.user("lain@x.id", peran="kasir")
+    toko.buka_shift(lain)
+    c = toko.checkout(toko.payload(kasir=lain, code="ABCDE23458"), lain)
+    assert [x["no"] for x in json.loads(db.sql("select pos_my_notas()", sebagai=lain)[0][0])] == [c["no"]]
     assert db.sql("select pos_my_notas()", sebagai=toko.kasir) == [("[]",)]
 
 

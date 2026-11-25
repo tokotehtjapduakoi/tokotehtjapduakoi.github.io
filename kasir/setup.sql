@@ -78,8 +78,7 @@ create table if not exists public.pos_audit(
   source text not null default 'app'
 );
 
--- Shift kasir (tabel saja; aturan buka/tutup/serah terima menyusul).
--- Shift terbuka = closed_at kosong.
+-- Shift kasir. Shift terbuka = closed_at kosong. Aturan buka/tutup/serah terima: fungsi pos_shift_* di bawah.
 create table if not exists public.pos_shifts(
   id bigserial primary key,
   cashier uuid,
@@ -94,6 +93,15 @@ create table if not exists public.pos_shifts(
   received_by uuid,
   received_at timestamptz
 );
+-- Kolom tambahan (aman dijalankan ulang): shift ditutup untuk serah terima (true) atau tutup toko (false).
+alter table public.pos_shifts add column if not exists handover boolean;
+-- Satu laci: paling banyak satu shift "memegang laci" = terbuka, atau tertutup untuk serah terima
+-- yang belum diterima. Dijaga di tingkat database, di luar pemeriksaan fungsi.
+create unique index if not exists pos_shifts_satu_laci on public.pos_shifts ((true))
+  where closed_at is null or (coalesce(handover, false) and received_at is null);
+-- Satu foto tutup shift hanya untuk satu shift.
+create unique index if not exists pos_shifts_foto_unik on public.pos_shifts(close_photo)
+  where close_photo is not null;
 
 -- Nota lunas. Terkunci setelah dibuat: hanya status, voided_at, held yang boleh berubah (trigger di bawah).
 create table if not exists public.pos_notas(
@@ -185,6 +193,13 @@ $$;
 create or replace function public.pos_device_ok(p_device text) returns boolean
 language sql stable security definer set search_path = public as $$
   select public.pos__device_status(p_device) = 'approved'
+$$;
+
+-- Aturan foto bukti: path di folder kasir yang login dan sudah terunggah di bucket 'bukti'.
+create or replace function public.pos__photo_ok(p_path text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(starts_with(p_path, auth.uid()::text || '/'), false)
+     and exists (select 1 from storage.objects o where o.bucket_id = 'bukti' and o.name = p_path)
 $$;
 
 -- ---------- Perangkat ----------
@@ -344,14 +359,103 @@ end $$;
 -- ---------- Siapa saya ----------
 create or replace function public.pos_me(p_device text) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
+declare v_shift pos_shifts; v_wait pos_shifts;
 begin
   if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  select * into v_shift from pos_shifts where cashier = auth.uid() and closed_at is null
+   order by opened_at desc, id desc limit 1;
+  select * into v_wait from pos_shifts where closed_at is not null and coalesce(handover, false)
+     and received_at is null limit 1;
   return jsonb_build_object(
     'role', (select role from kk_staff where user_id = auth.uid()),
     'name', (select name from kk_staff where user_id = auth.uid()),
     'mfa', coalesce(auth.jwt()->>'aal', '') = 'aal2',
     'device', pos__device_status(p_device),
-    'shift', null);  -- diisi di Task 5 (shift terbuka)
+    'shift', case when v_shift.id is null then null else jsonb_build_object(
+      'id', v_shift.id, 'opened_at', v_shift.opened_at, 'cash_start', v_shift.cash_start) end,
+    'handover_waiting', case when v_wait.id is null then null else jsonb_build_object(
+      'shift_id', v_wait.id,
+      'cashier_name', (select name from kk_staff where user_id = v_wait.cashier),
+      'cash_counted', v_wait.cash_counted) end);
+end $$;
+
+-- ---------- Shift & serah terima kas ----------
+-- Tunai seharusnya di laci untuk satu shift = modal awal + nota tunai lunas. Internal (tidak di-grant).
+create or replace function public.pos_shift_expected(p_shift bigint) returns int
+language sql stable security definer set search_path = public as $$
+  select s.cash_start + coalesce((
+    select sum(n.total) from pos_notas n join pos_pay_methods m on m.id = n.method_id
+     where n.shift_id = s.id and n.status = 'lunas' and m.kind = 'tunai'), 0)::int
+    from pos_shifts s where s.id = p_shift
+$$;
+
+create or replace function public.pos__shift_out(p_id bigint) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('id', id, 'opened_at', opened_at, 'cash_start', cash_start)
+    from pos_shifts where id = p_id
+$$;
+
+-- Buka shift pertama (modal awal diketik). Ditolak bila laci masih dipegang shift lain.
+create or replace function public.pos_shift_open(p_device text, p_cash_start int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v_id bigint;
+begin
+  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  if not pos_device_ok(p_device) then raise exception 'Perangkat belum disetujui pemilik'; end if;
+  if p_cash_start is null or p_cash_start < 0 then raise exception 'Modal awal tidak valid'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('pos_shift', 0));
+  if exists (select 1 from pos_shifts where closed_at is null) then
+    raise exception 'Masih ada shift terbuka';
+  end if;
+  if exists (select 1 from pos_shifts where closed_at is not null and coalesce(handover, false) and received_at is null) then
+    raise exception 'Ada serah terima kas yang menunggu, terima dulu';
+  end if;
+  insert into pos_shifts(cashier, device, cash_start) values (auth.uid(), p_device, p_cash_start)
+  returning id into v_id;
+  return pos__shift_out(v_id);
+end $$;
+
+-- Tutup shift sendiri. p_handover = true: laci menunggu kasir berikutnya; false: tutup toko.
+create or replace function public.pos_shift_close(p_cash_counted int, p_photo_path text, p_handover boolean)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_photo text := nullif(trim(p_photo_path), ''); v_id bigint;
+begin
+  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  if p_cash_counted is null or p_cash_counted < 0 then raise exception 'Hitungan uang tidak valid'; end if;
+  if p_handover is null then raise exception 'Pilih serah terima atau tutup toko'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('pos_shift', 0));
+  select id into v_id from pos_shifts where cashier = auth.uid() and closed_at is null
+   order by opened_at desc, id desc limit 1 for update;
+  if v_id is null then raise exception 'Tidak ada shift terbuka'; end if;
+  if v_photo is null then raise exception 'Foto bukti wajib'; end if;
+  if not pos__photo_ok(v_photo) then raise exception 'Foto bukti tidak ditemukan'; end if;
+  if exists (select 1 from pos_notas where photo_path = v_photo)
+     or exists (select 1 from pos_shifts where close_photo = v_photo) then
+    raise exception 'Foto bukti sudah dipakai';
+  end if;
+  update pos_shifts set closed_at = now(), cash_counted = p_cash_counted, close_photo = v_photo,
+         handover = p_handover where id = v_id;
+  return jsonb_build_object('shift_id', v_id, 'handover', p_handover);
+end $$;
+
+-- Kasir lain (atau pemilik) menerima laci: hitungannya dicatat, shift baru dibuka dengan modal = hitungan itu.
+create or replace function public.pos_shift_receive(p_device text, p_count int) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v_old pos_shifts; v_id bigint;
+begin
+  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  if not pos_device_ok(p_device) then raise exception 'Perangkat belum disetujui pemilik'; end if;
+  if p_count is null or p_count < 0 then raise exception 'Hitungan uang tidak valid'; end if;
+  perform pg_advisory_xact_lock(hashtextextended('pos_shift', 0));
+  select * into v_old from pos_shifts where closed_at is not null and coalesce(handover, false)
+     and received_at is null order by id desc limit 1 for update;
+  if v_old.id is null then raise exception 'Tidak ada serah terima yang menunggu'; end if;
+  if v_old.cashier = auth.uid() then raise exception 'Serah terima harus diterima kasir lain'; end if;
+  update pos_shifts set received_count = p_count, received_by = auth.uid(), received_at = now()
+   where id = v_old.id;
+  insert into pos_shifts(cashier, device, cash_start, received_from)
+  values (auth.uid(), p_device, p_count, v_old.id) returning id into v_id;
+  return jsonb_build_object('shift', pos__shift_out(v_id), 'selisih', p_count - v_old.cash_counted);
 end $$;
 
 -- ---------- Nota terkunci ----------
@@ -479,8 +583,7 @@ begin
 
   -- Foto bukti: wajib, di folder kasir sendiri, sudah terunggah, belum dipakai nota lain.
   if v_photo is null then raise exception 'Foto bukti wajib'; end if;
-  if not starts_with(v_photo, v_uid::text || '/')
-     or not exists (select 1 from storage.objects o where o.bucket_id = 'bukti' and o.name = v_photo) then
+  if not pos__photo_ok(v_photo) then
     raise exception 'Foto bukti tidak ditemukan';
   end if;
   if exists (select 1 from pos_notas where photo_path = v_photo) then
@@ -635,10 +738,11 @@ do $$ declare f record; begin
     execute format('revoke execute on function %s from public, anon, authenticated', f.sig);
   end loop;
 end $$;
--- Internal, sengaja tidak di-grant: pos__audit, pos__device_status, pos_device_ok, pos__nota_out,
--- pos__nota_lock, pos__nota_lines_lock.
+-- Internal, sengaja tidak di-grant: pos__audit, pos__device_status, pos_device_ok, pos__photo_ok, pos__nota_out,
+-- pos__nota_lock, pos__nota_lines_lock, pos__shift_out, pos_shift_expected.
 grant execute on function public.pos_device_request(text, text), public.pos_devices_list(),
   public.pos_device_decide(text, boolean), public.pos_catalog(), public.pos_item_save(jsonb),
   public.pos_variant_save(jsonb), public.pos_method_save(jsonb), public.pos_discount_save(jsonb),
-  public.pos_me(text), public.pos_checkout(jsonb), public.pos_my_notas()
+  public.pos_me(text), public.pos_checkout(jsonb), public.pos_my_notas(),
+  public.pos_shift_open(text, int), public.pos_shift_close(int, text, boolean), public.pos_shift_receive(text, int)
   to authenticated;
