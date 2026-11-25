@@ -7,7 +7,7 @@ const CFG=window.KOLAM_CONFIG||{};
 const $=id=>document.getElementById(id);
 const rp=n=>"Rp"+Math.round(n).toLocaleString("id-ID");
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,3200)}
+function toast(m){if(document.querySelector(".reveal")){toast.pending=m;return}const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,3200)}
 
 /* ===== aturan (diperbarui dari database saat dibuka) ===== */
 const RULE={rate:{R:.80,SR:.17,UR:.03},pts:{R:1,SR:5,UR:25},pitySR:10,pityUR:40,
@@ -94,9 +94,9 @@ async function loadMe(){const me=await rpc("kk_me");if(!me){S=null;return false}
   return true}
 
 /* ===== tarik ===== */
-function showReveal(){if(!queue.length){render();return}
+function showReveal(){if(!queue.length){render();if(toast.pending){const m=toast.pending;toast.pending=null;toast(m)}return}
   const c=queue.shift();const isNew=!S._seen||!S._seen.includes(c.id);S._seen=[...(S._seen||[]),c.id];
-  const ov=document.createElement("div");ov.className="reveal";ov.setAttribute("role","dialog");ov.setAttribute("aria-label","Hasil tarikan");
+  const ov=document.createElement("div");ov.className="reveal r-"+c.t;ov.setAttribute("role","dialog");ov.setAttribute("aria-label","Hasil tarikan");
   ov.innerHTML=`<div class="rv"><p class="small" style="opacity:.8">Ketuk kartu untuk membuka · sisa ${queue.length}</p>
    <div class="flip" tabindex="0"><div class="in"><div class="face back"><svg viewBox="0 0 300 400" width="100%" height="100%"><rect width="300" height="400" fill="#0e4d32"/><circle cx="150" cy="200" r="90" fill="none" stroke="#b58a3c" stroke-width="6"/>${koi(150,175,120,0,{b:"#f6efdf",s:[]},"bk1")}${koi(150,228,120,180,{b:"#d9602a",s:[]},"bk2")}<text x="150" y="350" text-anchor="middle" font-family="Georgia,serif" font-size="20" letter-spacing="6" fill="#b58a3c">TJAP DUA KOI</text></svg></div>
    <div class="face front glow-${c.t}">${cardHTML(c)}</div></div></div>
@@ -104,7 +104,7 @@ function showReveal(){if(!queue.length){render();return}
    <p class="nmx" hidden><b>${c.nm}</b> · +${RULE.pts[c.t]} poin<br><span style="opacity:.75;font-size:13px">Sudah masuk ke kolam</span></p>
    <button class="btn gold" hidden>${queue.length?"Tarik berikutnya":"Masukkan ke kolam"}</button></div>`;
   document.body.append(ov);const f=ov.querySelector(".flip"),b=ov.querySelector("button");
-  const open=()=>{if(f.classList.contains("open"))return;f.classList.add("open");setTimeout(()=>{ov.querySelector(".rl").hidden=false;ov.querySelector(".nmx").hidden=false;b.hidden=false;b.focus()},650)};
+  const open=()=>{if(f.classList.contains("open"))return;f.classList.add("open");ov.classList.add("open");setTimeout(()=>{ov.querySelector(".rl").hidden=false;ov.querySelector(".nmx").hidden=false;b.hidden=false;b.focus()},650)};
   f.addEventListener("click",open);f.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();open()}});
   b.addEventListener("click",()=>{ov.remove();showReveal()});f.focus()}
 
@@ -115,29 +115,30 @@ const TABS=[["tarik","Tarik"],["kolam","Kolam"],["tukar","Tukar"],["peringkat","
 function nav(){const n=$("tabs");n.hidden=!S;if(!S){n.innerHTML="";return}
   n.innerHTML=TABS.map(([k,l])=>`<button type="button" data-k="${k}" ${k===tab?'aria-current="page"':""}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>${l}</button>`).join("");
   n.querySelectorAll("button").forEach(b=>b.onclick=()=>{tab=b.dataset.k;sel={};render();scrollTo(0,0)})}
-function header(){return `<div class="head"><h1>Kolam Koi</h1><a class="small muted" href="../">Tjap Dua Koi</a></div>
- <p class="small">Halo, <b>${esc(S.name)}</b></p>
- <div class="stats"><div class="stat"><b>${totalPts()}</b><span>poin kartu</span></div><div class="stat"><b>${Math.min(distinct(),12)}/12</b><span>koleksi</span></div><div class="stat"><b>${S.exchanged}</b><span>poin ditukar${S.bank?` · saldo ${S.bank}`:""}</span></div></div>`}
-
+const LAMP=`<svg class="lamp" viewBox="0 0 96 64" aria-hidden="true"><path d="M0 4q48 16 96 0" fill="none" stroke="#C9A24B" stroke-width="1.5"/>${[[22,9],[52,13],[80,8]].map(([x,y],i)=>`<g transform="translate(${x} ${y})"><line x1="0" y1="0" x2="0" y2="6" stroke="#C9A24B" stroke-width="1.5"/><rect x="-5" y="5" width="10" height="3" rx="1" fill="#1F2A25"/><ellipse cx="0" cy="17" rx="9" ry="11" fill="${i===1?"#D9822B":"#B3262E"}" stroke="#1F2A25" stroke-width="1.5"/><path d="M0 6v22M-5 8q-3 9 0 18M5 8q3 9 0 18" stroke="#1F2A25" stroke-width="1" fill="none" opacity=".5"/><rect x="-4" y="27" width="8" height="3" rx="1" fill="#1F2A25"/></g>`).join("")}</svg>`;
+const BACK=`<a class="back" href="../" aria-label="Kembali ke website toko"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a>`;
+function top(inner){return `<header class="top">${LAMP}<div class="brand">${BACK}<div><span class="tjap">TJAP DUA KOI</span><h1>Kolam Koi</h1></div></div>${inner||""}</header>`}
+function header(){return top(`<p class="hi">Halo, <b>${esc(S.name)}</b></p>
+ <div class="wallet"><div><b>${totalPts()}</b><span>poin kartu</span></div><div><b>${Math.min(distinct(),12)}<small style="font-size:16px;opacity:.7">/12</small></b><span>koleksi</span></div><div><b>${S.exchanged}</b><span>ditukar${S.bank?` · saldo ${S.bank}`:""}</span></div></div>`)}
 function vTarik(){const tiers=RULE.pulls.slice().reverse();
   return header()+`<section class="card"><h2>Masukkan nota</h2><p class="small muted">Ketik nomor nota dan total belanja persis seperti di struk. Jumlah tarikan otomatis sesuai total belanja.</p>
   <label for="nota">Nomor nota<input id="nota" class="txt" autocomplete="off" autocapitalize="characters" placeholder="mis. POS-1123-0303"></label>
   <label for="tot">Total belanja di struk (Rp)<input id="tot" inputmode="numeric" autocomplete="off" placeholder="0"></label>
-  <button class="btn gold" id="go">Cek nota & tarik</button>
+  <button class="btn gold" id="go">Tarik kartu!</button>
   <table class="tiers">${tiers.map(([m,n])=>`<tr><td>Belanja mulai ${rp(m)}</td><td>${n} tarikan</td></tr>`).join("")}</table></section>
   ${S.wait.length?`<section class="card"><h2>Nota belum tercatat</h2><p class="small muted">Toko belum mendaftarkan nota ini, atau totalnya tidak cocok. Biasanya nota tercatat beberapa menit setelah bayar. Tarikanmu tidak hilang.</p>${S.wait.map((w,i)=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><div><b style="font-family:var(--f-mono)">${esc(w.nota)}</b><div class="small muted">${rp(w.total)}</div></div><div class="row" style="gap:6px"><button type="button" class="btn sm" data-w="${i}">Cek lagi</button><button type="button" class="btn sm ghost" data-x="${i}" aria-label="Hapus ${esc(w.nota)}">Hapus</button></div></div>`).join("")}</section>`:""}
-  <section class="card"><h2>Peluang</h2><div class="small">Rare 80% · Super Rare 17% · Ultra Rare 3%</div>
+  <section class="card"><h2>Peluang</h2><div class="odds"><div class="R"><b>80%</b><span>Rare</span></div><div class="SR"><b>17%</b><span>Super Rare</span></div><div class="UR"><b>3%</b><span>Ultra Rare</span></div></div>
   <div class="pity"><div>Super Rare dijamin dalam <b>${Math.max(1,RULE.pitySR-S.pity.sr)}</b> tarikan lagi</div><div class="bar"><i style="width:${S.pity.sr/RULE.pitySR*100}%"></i></div>
   <div>Ultra Rare dijamin dalam <b>${Math.max(1,RULE.pityUR-S.pity.ur)}</b> tarikan lagi</div><div class="bar u"><i style="width:${S.pity.ur/RULE.pityUR*100}%"></i></div></div>
   <p class="small muted">Setiap tarikan pasti dapat kartu dan poin. Tidak ada zonk.</p></section>`}
 const num=v=>Number(String(v).replace(/\D/g,""))||0;
 async function claim(nota,total){nota=String(nota||"").trim().toUpperCase();total=num(total);
   if(!nota)return toast("Isi nomor nota dulu.");if(!total)return toast("Isi total belanja dari struk.");if(busy)return;busy=true;
-  const go=$("go");if(go){go.disabled=true;go.textContent="Mengecek nota..."}
+  const go=$("go");if(go){go.disabled=true;go.textContent="Mengecek nota…"}
   try{const before=SKINS.filter(unlocked).length;const r=await rpc("kk_claim",{p_nota:nota,p_total:total});
     const drop=()=>{S.wait=S.wait.filter(w=>w.nota!==nota)};
-    if(r.status==="ok"){drop();await loadMe();queue=r.cards.map(id=>byId[id]).filter(Boolean);if(r.secret)queue.push(SECRET);save();
-      const after=SKINS.filter(unlocked);toast(after.length>before?`Skin kolam baru terbuka: ${after[after.length-1].nm}!`:`Nota ${nota}: belanja ${rp(r.total)} → ${r.pulls} tarikan`);showReveal()}
+    if(r.status==="ok"){drop();await loadMe();queue=r.cards.map(id=>byId[id]).filter(Boolean);if(r.secret)queue.push(SECRET);save();showReveal();
+      const after=SKINS.filter(unlocked);toast(after.length>before?`Skin kolam baru terbuka: ${after[after.length-1].nm}!`:`Nota ${nota}: belanja ${rp(r.total)} → ${r.pulls} tarikan`)}
     else if(r.status==="not_found"){if(!S.wait.some(w=>w.nota===nota))S.wait.push({nota,total});save();render();toast(r.left!=null&&r.left<=3?`Nota belum tercatat atau total tidak cocok. Sisa ${r.left} percobaan hari ini.`:"Nota belum tercatat atau total tidak cocok. Coba lagi beberapa menit lagi.")}
     else if(r.status==="used"){drop();save();render();toast(r.mine?`Nota ${nota} sudah kamu pakai.`:`Nota ${nota} sudah dipakai akun lain. Tanyakan ke kasir.`)}
     else if(r.status==="too_small"){drop();save();render();toast(`Belanja ${rp(r.total)} belum cukup untuk tarikan (minimal ${rp(RULE.pulls[RULE.pulls.length-1][0])}).`)}
@@ -200,10 +201,10 @@ function vPeringkat(){if(!board){loadBoard().then(render).catch(e=>toast(errMsg(
   const desc={tukar:"Poin yang ditukar bulan ini.",koleksi:`Siapa paling cepat mengumpulkan ke-${N} koi bulan ini. Yang belum lengkap diurutkan dari jumlah koinya.`}[lbCat];
   const top=k=>{const r=(board.prev[k]||[])[0];return r?esc(r.n):"–"};
   return header()+`<section class="card"><div class="row"><h2>Kolam Kehormatan</h2><span class="pill wait">reset ${left} hari lagi</span></div>
-  <p class="small muted">${bln} · papan kembali ke nol tiap tanggal 1. Juara 1 tiap kategori dapat <b>tumbler Tjap Dua Koi</b>.</p>
+  <div class="prize"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M10 9h20l-2.4 24a2 2 0 0 1-2 1.8H14.4a2 2 0 0 1-2-1.8z" fill="#F6EFDF" stroke="#1F2A25" stroke-width="2"/><path d="M9 9h22M22 9l3-6" stroke="#1F2A25" stroke-width="2" stroke-linecap="round"/><path d="M12 17h16" stroke="#C9A24B" stroke-width="3"/></svg><span>Juara 1 tiap kategori dapat <b>1 minuman gratis</b>. Papan kembali ke nol tiap tanggal 1.</span></div><p class="small muted">${bln}</p>
   <div class="seg" role="group" aria-label="Kategori">${[["tukar","Penukar"],["koleksi","Kolektor"]].map(([k,l])=>`<button type="button" data-c="${k}" aria-pressed="${k===lbCat}">${l}</button>`).join("")}</div>
   <p class="small">${desc}</p>
-  <div>${rows.map((r,i)=>`<div class="lb ${r.me?"me":""}"><div class="rk">${i<3?`<span class="medal" style="background:${med[i]}">${i+1}</span>`:i+1}</div><div>${r.me&&S.avatar?`<img src="${S.avatar}" alt="" style="width:26px;height:26px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;border:2px solid var(--gold)">`:""}<b>${esc(r.n)}${r.me?" (kamu)":""}</b>${i===0&&(r.v>0)?`<div class="small" style="color:var(--gold)">Calon pemenang tumbler</div>`:""}</div><div class="v" style="text-align:right">${val(r)}</div></div>`).join("")}</div>
+  <div>${rows.map((r,i)=>`<div class="lb ${r.me?"me":""}"><div class="rk">${i<3?`<span class="medal" style="background:${med[i]}">${i+1}</span>`:i+1}</div><div>${r.me&&S.avatar?`<img src="${S.avatar}" alt="" style="width:26px;height:26px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:6px;border:2px solid var(--gold)">`:""}<b>${esc(r.n)}${r.me?" (kamu)":""}</b>${i===0&&(r.v>0)?`<div class="small" style="color:var(--gold)">Calon pemenang minuman gratis</div>`:""}</div><div class="v" style="text-align:right">${val(r)}</div></div>`).join("")}</div>
   <p class="small muted">Nama yang tampil adalah nama panggilan pilihan pelanggan. Bisa disembunyikan di tab Akun.</p></section>
   <section class="card"><h2>Juara ${board.prevName}</h2><div class="small" style="display:grid;gap:4px"><div>Penukar terbanyak: <b>${top("tukar")}</b></div><div>Kolektor tercepat: <b>${top("koleksi")}</b></div></div><p class="small muted">Pemenang diumumkan di Story Instagram setiap tanggal 1.</p></section>`}
 function bindPeringkat(){document.querySelectorAll(".seg button").forEach(b=>b.onclick=()=>{lbCat=b.dataset.c;render()})}
@@ -228,9 +229,8 @@ let authMode="masuk";
 function normPhone(v){let d=String(v||"").replace(/\D/g,"");if(d.startsWith("0"))d="62"+d.slice(1);else if(d.startsWith("8"))d="62"+d;return /^62\d{8,13}$/.test(d)?d:null}
 const mail=p=>p+"@member.tjapduakoi.id";
 function vAuth(){const d=authMode==="daftar";
-  return `<div class="head"><h1>Kolam Koi</h1><a class="small muted" href="../">Tjap Dua Koi</a></div>
-  <section class="card" style="text-align:center;justify-items:center"><svg viewBox="0 0 300 200" width="220" aria-hidden="true"><circle cx="150" cy="100" r="90" fill="none" stroke="var(--gold)" stroke-width="5"/>${koi(150,78,120,0,{b:"#e9e1cc",s:[["#d3352c",.1,-.05,.28]]},"h1")}${koi(150,128,120,180,{b:"#d9602a",s:[]},"h2")}</svg>
-  <p>Belanja di Toko Teh Tjap Dua Koi, tarik kartu koi dari notamu, kumpulkan poinnya, lalu tukar dengan minuman gratis dan hadiah.</p></section>
+  return `<section class="card hero"><span class="tjap">TJAP DUA KOI</span><h1>Kolam Koi</h1><svg viewBox="0 0 300 200" width="220" aria-hidden="true"><circle cx="150" cy="100" r="90" fill="none" stroke="var(--gold)" stroke-width="5"/>${koi(150,78,120,0,{b:"#e9e1cc",s:[["#d3352c",.1,-.05,.28]]},"h1")}${koi(150,128,120,180,{b:"#d9602a",s:[]},"h2")}</svg>
+  <ol class="steps"><li>Belanja di Toko Teh Tjap Dua Koi</li><li>Tarik kartu koi dari notamu</li><li>Kumpulkan poin, tukar minuman gratis</li></ol></section>
   <section class="card"><div class="seg" role="group" aria-label="Pilih"><button type="button" data-m="masuk" aria-pressed="${!d}">Masuk</button><button type="button" data-m="daftar" aria-pressed="${d}">Daftar baru</button></div>
   <form id="af" style="display:grid;gap:12px" novalidate>
   <label for="hp">Nomor HP (WhatsApp)<input id="hp" class="txt" inputmode="tel" autocomplete="tel" placeholder="0812 3456 7890" required></label>
@@ -322,7 +322,7 @@ function startPond(){cancelAnimationFrame(pondRAF);const svg=$("pond");if(!svg)r
   $("pdel")&&($("pdel").onclick=()=>{delete S.avatar;delete S.avatarPos;save();render()});
   document.querySelectorAll("[data-skin]").forEach(b=>b.onclick=()=>{const k=SKINS.find(x=>x.id===b.dataset.skin);if(k.photo&&!S.customBg)return setBg();if(!unlocked(k))return toast(k.cost?`Tukar di tab Tukar (${k.cost} poin).`:k.how+" · "+k.prog());S.skin=k.id;save();render()})}
 
-function vClosed(){return `<div class="head"><h1>Kolam Koi</h1><a class="small muted" href="../">Tjap Dua Koi</a></div><section class="card"><h2>Segera dibuka</h2><p class="muted">Kolam Koi sedang disiapkan. Pantau Instagram <b>@tokoteh.tjapduakoi</b> untuk tanggal mulainya.</p><a class="btn" style="display:grid;place-items:center;text-decoration:none" href="../">Kembali ke website</a></section>`}
+function vClosed(){return top()+`<section class="card"><h2>Segera dibuka</h2><p class="muted">Kolam Koi sedang disiapkan. Pantau Instagram <b>@tokoteh.tjapduakoi</b> untuk tanggal mulainya.</p><a class="btn" style="display:grid;place-items:center;text-decoration:none" href="../">Kembali ke website</a></section>`}
 function render(){nav();if(!sb){$("app").innerHTML=vClosed();return}
   if(!S){$("app").innerHTML=vAuth();bindAuth();return}
   const v={tarik:vTarik,kolam:vKolam,tukar:vTukar,peringkat:vPeringkat,akun:vAkun}[tab]();$("app").innerHTML=v;
