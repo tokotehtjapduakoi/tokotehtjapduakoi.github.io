@@ -16,16 +16,18 @@ Env:
 Yang dilakukan: membuat user uji sementara (uji-kasir-<acak>@uji.invalid, uji-pemilik-...,
 member uji), menjalankan alur kasir (minta perangkat -> buka shift -> unggah foto ke
 bukti/<uid>/ -> pos_checkout -> member daftar -> kk_claim_code -> cek tarikan -> tutup shift),
-memeriksa bahwa anon/kasir tidak bisa memanggil fungsi atau membaca tabel yang dilarang,
-lalu MENGHAPUS data uji di blok finally.
+memeriksa bahwa anon/kasir/member tidak bisa memanggil fungsi internal, membaca atau menulis tabel
+yang dilarang, dan tidak bisa menimpa foto bukti, lalu MENGHAPUS data uji di blok finally.
+Langkah pertama: memastikan service_role bisa membaca tabel pos_*/kk_* (berhenti dengan pesan jelas bila tidak).
 
 Batasan nyata (aal2 pemilik tidak bisa dipalsukan di Supabase asli):
   - fungsi khusus pemilik hanya diuji DITOLAK (pemilik aal1 dan kasir);
   - persetujuan perangkat dilakukan lewat tulis tabel service-role, bukan pos_device_decide;
   - void dan laporan (butuh aal2) tidak dijalankan sampai selesai.
 Nota, baris nota, shift, dan menu yang dipakai nota DIKUNCI trigger (tidak bisa DELETE lewat REST).
-Skrip menghapus semua yang bisa, menonaktifkan menu uji, dan mencetak SQL pembersih untuk
-sisanya (jalankan di SQL Editor). Satu nomor urut nota hari itu terpakai (tidak bisa dikembalikan).
+Skrip selalu membatalkan nota uji (keluar dari laporan) dan menutup shift uji yang masih terbuka,
+menghapus semua yang bisa, menonaktifkan menu uji, dan mencetak SQL pembersih untuk sisanya
+(jalankan di SQL Editor hari itu juga). Satu nomor urut nota hari itu terpakai (tidak bisa dikembalikan).
 Skrip menolak jalan bila ada shift sungguhan yang sedang terbuka/menunggu serah terima.
 """
 import hashlib
@@ -51,6 +53,9 @@ JPEG = bytes.fromhex(
     + "ffc0000b080001000101011100ffc4001400010000000000000000000000000000000000ffda0008010100003f00d2cf20ffd9")
 
 HASIL = []  # (nama, lulus, catatan)
+TABEL_SERVICE = ["pos_devices", "pos_items", "pos_variants", "pos_price_history", "pos_pay_methods", "pos_discounts",
+                 "pos_audit", "pos_shifts", "pos_notas", "pos_nota_lines", "pos_void_requests", "pos_counters",
+                 "kk_staff", "kk_members", "kk_receipts", "kk_pulls", "kk_settings"]
 RAND = secrets.token_hex(3)
 
 
@@ -134,14 +139,23 @@ def main():
     print(f"Uji asap Kasir Koi -> {URL}")
     sandi = secrets.token_urlsafe(18)
     users = {}      # nama -> uid
-    dibuat = {"devices": [], "storage": [], "items": [], "methods": [], "nota": [], "shift": [], "variants": []}
+    dibuat = {"devices": [], "storage": [], "items": [], "methods": [], "nota": [], "shift": [], "variants": [],
+              "receipts": []}
     phone_member = "6299" + "".join(secrets.choice("0123456789") for _ in range(8))
     phone_kasir = "6298" + "".join(secrets.choice("0123456789") for _ in range(8))
     mail_kasir = f"uji-kasir-{RAND}@uji.invalid"
     mail_pemilik = f"uji-pemilik-{RAND}@uji.invalid"
     mail_member = f"{phone_member}@member.tjapduakoi.id"
     try:
-        # ---- 0. Prasyarat: jangan ganggu operasional sungguhan ----
+        # ---- 0. Prasyarat: akses service_role, dan jangan ganggu operasional sungguhan ----
+        for tbl in TABEL_SERVICE:
+            c, d = svc("GET", f"{tbl}?select=*&limit=1")
+            if c != 200:
+                cek(f"service_role bisa membaca {tbl}", False,
+                    f"{c} {str(d)[:120]} -> kunci secret tidak tersuntik/terisi, atau kasir/setup.sql & kolam/setup.sql "
+                    "versi baru belum dijalankan (hak service_role)")
+                return
+        cek("service_role bisa membaca semua tabel pos_*/kk_* yang dipakai uji", True)
         c, d = svc("GET", "pos_shifts?select=id&or=(closed_at.is.null,and(handover.is.true,received_at.is.null))&limit=1")
         if c != 200:
             cek("Akses service ke tabel pos_shifts (proxy menyuntik kunci secret?)", False, f"{c} {d}")
@@ -266,6 +280,46 @@ def main():
         r = rpc("pos_void_pending", {}, tk)
         cek("Kasir tidak bisa pos_void_pending (pemilik)", ditolak(r))
 
+        # ---- 6b. Kasir: tulis tabel langsung ditolak ----
+        ditulis = {"pos_notas": f"id=eq.{nota_id}", "pos_nota_lines": f"nota_id=eq.{nota_id}",
+                   "pos_shifts": f"id=eq.{shift_id}", "kk_receipts": f"pos_nota_id=eq.{nota_id}",
+                   "pos_audit": f"by_user=eq.{users['kasir']}"}
+        ubah = {"pos_notas": {"total": 1}, "pos_nota_lines": {"qty": 9}, "pos_shifts": {"cash_counted": 1},
+                "kk_receipts": {"total": 1}, "pos_audit": {"action": "x"}}
+        for tbl, filt in ditulis.items():
+            for metode, path, body in [("POST", tbl, ubah[tbl]), ("PATCH", f"{tbl}?{filt}", ubah[tbl]),
+                                       ("DELETE", f"{tbl}?{filt}", None)]:
+                c, d = http(metode, f"/rest/v1/{path}", body, token=tk, extra={"Prefer": "return=representation"})
+                cek(f"Kasir tidak bisa {metode} {tbl}", c >= 400, f"{c} {str(d)[:80]}")
+        c, d = svc("GET", f"pos_notas?select=total,status&id=eq.{nota_id}")
+        cek("Nota uji tidak berubah setelah percobaan tulis", c == 200 and d == [{"total": 20000, "status": "lunas"}], f"{c} {d}")
+
+        # ---- 6c. Fungsi internal ditolak ----
+        for nama, fn, args, tok in [
+            ("kasir: kk__draw", "kk__draw", {"p_member": users.get("member") or users["kasir"], "p_receipt": nota_no}, tk),
+            ("member: kk__draw", "kk__draw", {"p_member": users.get("member") or users["kasir"], "p_receipt": nota_no}, tm),
+            ("kasir: kk__use_voucher", "kk__use_voucher", {"p_code": "TK-XXXXX", "p_by": users["kasir"]}, tk),
+            ("kasir: pos_shift_expected", "pos_shift_expected", {"p_shift": shift_id}, tk),
+            ("kasir: pos__audit", "pos__audit", {"p_tbl": "x", "p_row": "x", "p_action": "x", "p_old": None, "p_new": None}, tk),
+            ("kasir: pos__nota_out", "pos__nota_out", {"p_id": nota_id}, tk),
+            ("member: kk_add_receipt", "kk_add_receipt", {"p_nota": f"UJI-M-{RAND}", "p_total": 30000}, tm)]:
+            r = rpc(fn, args, tok)
+            cek(f"Tidak bisa dipanggil klien ({nama})", ditolak(r), f"{r[0]} {pesan(r)}")
+        # kk_add_receipt untuk kasir: boleh selama "Nota manual oleh kasir" menyala (masa transisi ESB)
+        c, d = svc("GET", "kk_settings?select=kasir_nota_manual&id=eq.1")
+        manual = c == 200 and bool(d) and d[0].get("kasir_nota_manual") is True
+        nota_manual = f"UJI-{RAND}"
+        r = rpc("kk_add_receipt", {"p_nota": nota_manual, "p_total": 30000}, tk)
+        if r[0] < 400:
+            dibuat["receipts"].append(nota_manual)
+        cek(f"kk_add_receipt kasir {'diizinkan (masa transisi)' if manual else 'ditolak (transisi selesai)'}",
+            (r[0] < 400) == manual, f"{r[0]} {pesan(r)}")
+
+        # ---- 6d. Foto bukti tidak bisa ditimpa ----
+        c, d = http("POST", "/storage/v1/object/bukti/" + foto1, token=tk, raw=JPEG, ctype="image/jpeg",
+                    extra={"x-upsert": "true"})
+        cek("Unggah x-upsert menimpa foto bukti ditolak", c >= 400, f"{c} {str(d)[:80]}")
+
         # ---- 7. Tutup shift (agar laci sungguhan tidak tertahan) ----
         c, d, foto2 = unggah(f"uji-{RAND}-2.jpg")
         r = rpc("pos_shift_close", {"p_cash_counted": 20000, "p_photo_path": foto2, "p_handover": False}, tk)
@@ -304,6 +358,25 @@ def bersihkan(users, dibuat):
         print(("  ok    " if ok else "  GAGAL ") + ket + ("" if ok else f" [{c} {str(d)[:100]}]"))
         return ok
     ins = lambda xs: "in.(" + ",".join(str(x) for x in xs) + ")"  # noqa: E731
+    sekarang = datetime.now(timezone.utc).isoformat()
+    # Nota uji keluar dari laporan hari ini: batal (pemicu kunci mengizinkan lunas -> batal).
+    if dibuat["nota"]:
+        c, d = svc("PATCH", f"pos_notas?id={ins(dibuat['nota'])}&status=eq.lunas",
+                   {"status": "batal", "voided_at": sekarang}, prefer="return=minimal")
+        print(("  ok    " if c in (200, 204) else "  GAGAL ") + "nota uji dibatalkan" + ("" if c in (200, 204) else f" [{c} {str(d)[:100]}]"))
+    # Shift uji yang masih terbuka ditutup (tutup toko, hitungan = seharusnya) supaya laci sungguhan bisa dibuka.
+    for sid in [s for s in dibuat["shift"] if s]:
+        c, d = svc("GET", f"pos_shifts?select=cash_start,closed_at&id=eq.{sid}")
+        if c != 200 or not d or d[0]["closed_at"] is not None:
+            continue
+        c2, d2 = svc("GET", f"pos_notas?select=total,pos_pay_methods(kind)&shift_id=eq.{sid}&status=eq.lunas")
+        tunai = sum(n["total"] for n in (d2 or []) if (n.get("pos_pay_methods") or {}).get("kind") == "tunai") if c2 == 200 else 0
+        c, d = svc("PATCH", f"pos_shifts?id=eq.{sid}&closed_at=is.null",
+                   {"closed_at": sekarang, "handover": False, "cash_counted": (d[0]["cash_start"] or 0) + tunai},
+                   prefer="return=minimal")
+        print(("  ok    " if c in (200, 204) else "  GAGAL ") + f"shift uji {sid} ditutup" + ("" if c in (200, 204) else f" [{c} {str(d)[:100]}]"))
+    if dibuat["receipts"]:
+        hapus("kk_receipts manual uji", f"kk_receipts?nota={ins(dibuat['receipts'])}")
     if users.get("member"):
         m = users["member"]
         for t in ["kk_pulls", "kk_collection", "kk_inventory", "kk_exchanges"]:
@@ -359,7 +432,9 @@ def ringkas(sisa, users, dibuat):
         s = ",".join(str(x) for x in dibuat["shift"] if x)
         v = ",".join(str(x) for x in dibuat["variants"])
         i = ",".join(str(x) for x in dibuat["items"])
-        print("\nSisa terkunci trigger. Jalankan di Supabase SQL Editor untuk membersihkan:\n")
+        print("\nSisa terkunci trigger. Nota uji sudah dibatalkan dan shift uji sudah ditutup, jadi laporan dan laci aman.\n"
+              "Tetap jalankan SQL ini di Supabase SQL Editor HARI INI JUGA (sebelum toko buka besok), supaya shift uji\n"
+              "tidak dianggap 'tutup toko sebelumnya' dan nomor nota uji hilang dari daftar:\n")
         print("begin;\nalter table public.pos_notas disable trigger pos_nota_lock;\n"
               "alter table public.pos_nota_lines disable trigger pos_nota_lines_lock;")
         print(f"delete from public.pos_nota_lines where nota_id in ({n});")
