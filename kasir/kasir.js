@@ -12,8 +12,9 @@ const DIAM_MAKS=30*60*1000; // logout otomatis setelah 30 menit tanpa sentuhan/k
 const S={sb:null,user:null,me:null,catalog:null,device:null,screen:"masuk",antre:[]};
 let galat="",sibuk=false,emailTerakhir="";
 async function rpc(fn,a){const {data,error}=await S.sb.rpc(fn,a||{});if(error)throw error;return data}
-// Jumlah nota di antrean offline (termasuk yang ditolak server: belum sampai, jadi tidak boleh hilang).
-const antrean=async()=>{try{return await window.Antrean.jumlah()}catch(e){return 0}};
+// Nota kasir ini yang masih menunggu dikirim (yang ditolak server tidak dihitung: tetap tersimpan untuk pemilik).
+const antrean=async()=>{try{return await window.Antrean.jumlah(S.user&&S.user.id)}catch(e){return 0}};
+const BATAS_LUNAS=8000; // Lunas menunggu kiriman paling lama ini, lalu layar Selesai tampil dari data HP
 const daring=()=>navigator.onLine!==false;
 
 /* ---------- Simpanan untuk buka tanpa internet ---------- */
@@ -169,11 +170,15 @@ async function lunas(){if(!bisaLunas())return;J.sibuk=true;J.pesan="";segarBayar
   const p=bangunPayload(),h=hitung(),m=metodeAktif();
   const s={id:p.id,tunai:h.tunai,hp:hp62(J.hp)||"",baris:barisWa(),metode:m.name,kode:p.code,antre:true,
     hasil:{no:null,total:h.total,change:h.tunai?h.uang-h.total:null,code_status:h.total>0?"aktif":"tidak_ada"}};
-  try{await Antrean.simpan({id:p.id,payload:p,foto:J.foto,fotoPath:p.photo_path,dibuat:Date.now()})}
+  try{await Antrean.simpan({id:p.id,uid:S.user.id,payload:p,foto:J.foto,fotoPath:p.photo_path,dibuat:Date.now()})}
   catch(err){J.sibuk=false;J.pesan="Nota gagal disimpan di HP: "+errMsg(err);render();return}
   J.fotoKunci=true; // sejak masuk antrean, foto ini bukti nota ini
-  let r={hasil:{},ditolak:{}};
-  try{r=await Antrean.kirimSemua(S.sb)}catch(e){}
+  // Nota baru dikirim lebih dulu dari sisa antrean. Bila lama (sinyal lemah), jangan tahan kasir:
+  // layar Selesai tampil dari data HP, kiriman tetap jalan dan memperbarui layar setelah selesai.
+  let setelahDulu;const dulu=new Promise(ok=>{setelahDulu=ok});
+  const jalan=Antrean.kirimSemua(S.sb,{uid:S.user.id,dulu:p.id,setelahDulu});
+  jalan.then(terapkanHasil,()=>{}).then(segarBilah);
+  const r=await Promise.race([dulu,jalan,new Promise(ok=>setTimeout(()=>ok(null),BATAS_LUNAS))]).catch(()=>null)||{hasil:{},ditolak:{}};
   const tolak=r.ditolak[p.id];
   if(tolak){await Antrean.hapus(p.id).catch(()=>{});
     if(/Harga berubah|muat ulang menu/i.test(tolak)){try{await muatUlangMenu();J.pesan="Harga menu berubah. Menu sudah dimuat ulang dan total dihitung ulang. Periksa lagi, lalu tekan Lunas.";
@@ -257,28 +262,34 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden)cekDiam()}
 // Pemicu: aplikasi dibuka, event online, dan tiap 30 detik selama ada nota menunggu.
 // Tidak jalan saat Lunas sedang berproses (Lunas mengirim sendiri dan butuh hasilnya).
 async function kirimAntrean(){if(!S.user||J.sibuk)return;
-  try{const r=await Antrean.kirimSemua(S.sb),s=J.selesai,ok=s&&s.antre&&r.hasil[s.id];
-    if(ok){Object.assign(s,{hasil:ok.hasil,kode:ok.kode,antre:false});s.teks=teksSelesai(s);if(J.tahap==="selesai")render()}}
-  catch(e){}
+  try{terapkanHasil(await Antrean.kirimSemua(S.sb,{uid:S.user.id}))}catch(e){}
   await segarBilah()}
+// Nota yang sedang tampil di layar Selesai sebagai "Tersimpan di HP" sudah sampai: tampilkan nomor dari server.
+function terapkanHasil(r){const s=J.selesai,ok=s&&s.antre&&r&&r.hasil[s.id];
+  if(!ok)return;Object.assign(s,{hasil:ok.hasil,kode:ok.kode,antre:false});s.teks=teksSelesai(s);if(J.tahap==="selesai")render()}
 async function segarBilah(){try{S.antre=await Antrean.daftar()}catch(e){S.antre=[]}renderBilah()}
 function linkLapor(it){const p=it.payload||{};
   const t=["Nota kasir gagal terkirim ke server.",`ID: ${it.id}`,`Waktu di HP: ${p.client_at||"-"}`,`Total: ${rp(p.total)}`,`Alasan: ${it.error}`].join("\n");
   return "https://wa.me/?text="+encodeURIComponent(t)}
 function renderBilah(){const b=$("bilah");if(!S.user){b.hidden=true;return}
-  const on=daring(),n=S.antre.length,gagal=S.antre.filter(it=>it.error);
+  const on=daring(),punyaku=it=>Antrean.milik(it)===S.user.id;
+  const n=S.antre.filter(it=>!it.error&&punyaku(it)).length,lain=S.antre.filter(it=>!it.error&&!punyaku(it)).length;
+  const gagal=S.antre.filter(it=>it.error);
   b.hidden=false;b.className="bilah "+(on?"on":"off");
   b.innerHTML=`<p><span class="titik" aria-hidden="true"></span>${on?"Online":"Offline"}${n?` · ${n} nota menunggu`:""}</p>
+  ${lain?`<p class="small">${lain} nota milik kasir lain menunggu. Terkirim saat kasir itu masuk di HP ini.</p>`:""}
   ${gagal.map(it=>`<div class="gagal"><p class="small">Nota ${esc(rp(it.payload&&it.payload.total))} ditolak server: ${esc(it.error)}</p>
     <a class="btn sm" target="_blank" rel="noopener" href="${esc(linkLapor(it))}">Laporkan ke pemilik</a></div>`).join("")}`}
 function ubahSinyal(){renderBilah();if(S.screen==="jual"&&J.tahap==="bayar"&&!J.sibuk)render()}
 addEventListener("online",()=>{ubahSinyal();kirimAntrean()});
 addEventListener("offline",ubahSinyal);
-setInterval(()=>{if(S.antre.some(it=>!it.error))kirimAntrean()},30*1000);
+setInterval(()=>{if(S.user&&S.antre.some(it=>!it.error&&Antrean.milik(it)===S.user.id))kirimAntrean()},30*1000);
 
 // Sesi tersimpan di HP (dipakai saat offline, tanpa menunggu percobaan refresh token).
 const userTersimpan=()=>{const a=bacaJson("kasir-auth");return a&&a.user||null};
 async function boot(){if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+  // Minta browser tidak membersihkan antrean (IndexedDB) saat ruang HP menipis.
+  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
   if(!CFG.supabaseUrl||!CFG.supabaseKey||!window.supabase){render();return}
   S.sb=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"kasir-auth"}});
   if(!daring()&&userTersimpan())S.user=userTersimpan();

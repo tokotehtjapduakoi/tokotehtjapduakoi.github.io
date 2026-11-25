@@ -117,9 +117,12 @@ async function auth(req, res, url) {
 // ---------- RPC ----------
 const NAMA = /^[a-z_][a-z0-9_]*$/;
 const putusRpc = new Map(); // fn -> sisa panggilan yang jawabannya dibuang (POST /__uji/putus-setelah-rpc {fn, kali})
+const lambatRpc = new Map(); // fn -> {ms, kali}: panggilan ditahan ms sebelum dijalankan (POST /__uji/lambat {fn, ms, kali})
 async function rpc(req, res, fn) {
   if (!NAMA.test(fn)) return kirim(res, 404, { message: "fungsi tidak ada" });
   const args = json(await bacaBody(req));
+  const l = lambatRpc.get(fn);
+  if (l && l.kali > 0) { l.kali--; await new Promise((ok) => setTimeout(ok, l.ms)); }
   const nama = Object.keys(args);
   if (!nama.every((n) => NAMA.test(n))) return kirim(res, 400, { message: "nama argumen tidak sah" });
   const nilai = nama.map((n) => (args[n] === null ? null : typeof args[n] === "object" ? JSON.stringify(args[n]) : String(args[n])));
@@ -234,6 +237,11 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/__uji/berkas" && req.method === "GET") { // isi berkas storage, untuk pemeriksaan uji
       const f = berkas.get(url.searchParams.get("path"));
       return f ? kirim(res, 200, f.bytes, f.tipe) : kirim(res, 404, { message: "tidak ada" });
+    }
+    if (url.pathname === "/__uji/lambat" && req.method === "POST") {
+      const { fn, ms = 0, kali = 1 } = json(await bacaBody(req));
+      lambatRpc.set(fn, { ms, kali });
+      return kirim(res, 200, { fn, ms, kali });
     }
     if (url.pathname === "/__uji/putus-setelah-rpc" && req.method === "POST") {
       const { fn, kali = 1 } = json(await bacaBody(req));

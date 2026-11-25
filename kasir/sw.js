@@ -33,6 +33,7 @@ self.addEventListener("fetch",e=>{const q=e.request;if(q.method!=="GET")return;
 async function dariCache(e,kunci,j){const c=await caches.open(CACHE);
   const lama=await c.match(kunci,{ignoreSearch:true});
   if(lama&&j==="tetap")return lama;
-  const baru=fetch(e.request).then(r=>{if(r.ok||r.type==="opaque")return c.put(kunci,r.clone()).then(()=>r);return r});
+  // Pembaruan melewati cache HTTP browser supaya versi baru dari server benar-benar terambil.
+  const baru=fetch(e.request,j==="segar"?{cache:"no-cache"}:undefined).then(r=>{if(r.ok||r.type==="opaque")return c.put(kunci,r.clone()).then(()=>r);return r});
   if(lama){e.waitUntil(baru.catch(()=>{}));return lama}
   return baru}

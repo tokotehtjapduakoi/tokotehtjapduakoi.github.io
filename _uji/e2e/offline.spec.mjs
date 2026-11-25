@@ -16,6 +16,7 @@ before(async () => {
 afterEach(async () => { // server tiruan dipakai bersama: kembalikan normal walau uji gagal
   await uji("/__uji/offline", { on: false });
   await uji("/__uji/putus-setelah-rpc", { fn: "pos_checkout", kali: 0 });
+  await uji("/__uji/lambat", { fn: "pos_checkout", ms: 0, kali: 0 });
 });
 after(async () => {
   await sql?.end();
@@ -140,5 +141,70 @@ test("halaman terbuka tanpa internet", async () => {
   await page.reload();
   await page.getByRole("button", { name: "Teh Tarik" }).waitFor();
   await bilah(page).getByText("Offline").waitFor();
+  await context.close();
+});
+
+// Item antrean buatan uji (uid = kasir pemilik nota; bawaan: kasir yang login; folder foto bawaan = uid).
+const simpanItem = (page, { uid = null, payload = {}, folder = null, dibuat = 1 } = {}) => page.evaluate(({ uid, payload, folder, dibuat }) => {
+  const u = uid || JSON.parse(localStorage.getItem("kasir-auth")).user.id, id = crypto.randomUUID();
+  return Antrean.simpan({ id, uid: u, payload: { id, ...payload }, foto: new Blob(["x"], { type: "image/jpeg" }),
+    fotoPath: `${folder || u}/${id}.jpg`, dibuat }).then(() => id);
+}, { uid, payload, folder, dibuat });
+
+test("nota ditolak tidak menahan antrean dan tidak menahan logout", async () => {
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await siapJual(page, buka, server);
+  const sebelum = await jumlahNota();
+  await internet(context, false);
+  // nota lama di depan antrean: storage menolak fotonya (4xx, bukan masalah jaringan) dan
+  // nota lain yang ditolak pos_checkout (P0001)
+  await simpanItem(page, { folder: "bukan-folder-kasir", dibuat: 1 });
+  await simpanItem(page, { payload: { id: "bukan-uuid" }, dibuat: 2 });
+  await jualQris(page);
+  await page.getByText("Tersimpan di HP, akan terkirim otomatis").waitFor();
+  await bilah(page).getByText("Offline · 3 nota menunggu").waitFor();
+  await internet(context, true);
+  await tunggu(async () => (await jumlahNota()) === sebelum + 1, "nota ketiga tetap terkirim");
+  await bilah(page).getByText(/ID nota tidak valid/).waitFor();
+  assert.equal(await bilah(page).getByRole("link", { name: "Laporkan ke pemilik" }).count(), 2);
+  assert.deepEqual(await page.evaluate(async () => [await Antrean.jumlah(), await Antrean.jumlahError()]), [0, 2]);
+  await page.getByRole("button", { name: "Keluar" }).click();
+  await page.getByRole("button", { name: "Masuk" }).waitFor();
+  assert.equal(await page.evaluate(() => Antrean.jumlahError()), 2, "nota error tetap tersimpan setelah logout");
+  await context.close();
+});
+
+test("nota kasir lain tidak dikirim dan tidak menahan logout", async () => {
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await siapJual(page, buka, server);
+  const lain = (await sql.query("select id from auth.users where email = 'budi@uji.id'")).rows[0].id;
+  await simpanItem(page, { uid: lain, payload: { offline: true }, dibuat: 1 });
+  const sebelum = await jumlahNota();
+  await jualQris(page);
+  await page.locator(".selesai .kode", { hasText: /^K\d{6}-\d{3}$/ }).waitFor();
+  await bilah(page).getByText("1 nota milik kasir lain menunggu", { exact: false }).waitFor();
+  assert.equal(await jumlahNota(), sebelum + 1);
+  const sisa = await page.evaluate(() => Antrean.daftar().then((a) => a.map((it) => [it.uid, it.error || null])));
+  assert.deepEqual(sisa, [[lain, null]], "nota kasir lain tidak dicoba");
+  assert.equal(await bilah(page).getByText(/nota menunggu$/).count(), 0, "bukan nota kasir ini");
+  await page.getByRole("button", { name: "Keluar" }).click();
+  await page.getByRole("button", { name: "Masuk" }).waitFor();
+  await context.close();
+});
+
+test("Lunas tidak menunggu kiriman yang lambat", async () => {
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await siapJual(page, buka, server);
+  const sebelum = await jumlahNota();
+  await uji("/__uji/lambat", { fn: "pos_checkout", ms: 12000, kali: 1 });
+  const mulai = Date.now();
+  await jualQris(page);
+  await page.getByText("Tersimpan di HP, akan terkirim otomatis").waitFor({ timeout: 11000 });
+  assert.ok(Date.now() - mulai < 11000, "layar Selesai tampil sebelum server menjawab");
+  assert.equal(await jumlahNota(), sebelum);
+  // kiriman yang sama tetap jalan di belakang, lalu layar Selesai menampilkan nomor nota
+  await page.locator(".selesai .kode", { hasText: /^K\d{6}-\d{3}$/ }).waitFor({ timeout: 15000 });
+  assert.equal(await jumlahNota(), sebelum + 1);
+  assert.equal(await page.evaluate(() => Antrean.jumlah()), 0);
   await context.close();
 });

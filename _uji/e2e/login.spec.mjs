@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
+import { after, afterEach, before, test } from "node:test";
 import { bukaHalaman, chromium, jalankanServer, masuk, rpcSebagai, siapkanDb } from "./bantu.mjs";
 
 let db, server, browser;
@@ -8,6 +8,7 @@ before(async () => {
   server = await jalankanServer(db.conninfo);
   browser = await chromium.launch();
 });
+afterEach(() => fetch(server.url + "/__uji/offline", { method: "POST", body: JSON.stringify({ on: false }) }));
 after(async () => {
   await browser?.close();
   await server?.tutup();
@@ -64,9 +65,12 @@ test("tidak logout otomatis selama antrean belum kosong", async () => {
   await buka();
   await masuk(page, "ocha@uji.id");
   await page.getByText("Menunggu persetujuan pemilik").waitFor();
-  // satu nota di antrean asli (HP belum disetujui, jadi server menolaknya dan nota tetap tersimpan)
-  await page.evaluate(() => Antrean.simpan({ id: crypto.randomUUID(), payload: { id: "x" }, foto: new Blob(["x"]),
-    fotoPath: "x.jpg", dibuat: Date.now() }));
+  // satu nota kasir ini di antrean asli; server tak terjangkau, jadi nota tetap menunggu
+  await fetch(server.url + "/__uji/offline", { method: "POST", body: JSON.stringify({ on: true }) });
+  await page.evaluate(() => {
+    const uid = JSON.parse(localStorage.getItem("kasir-auth")).user.id, id = crypto.randomUUID();
+    return Antrean.simpan({ id, uid, payload: { id }, foto: new Blob(["x"]), fotoPath: `${uid}/${id}.jpg`, dibuat: Date.now() });
+  });
   assert.equal(await page.evaluate(() => Antrean.jumlah()), 1);
   await page.clock.fastForward("31:00");
   await page.clock.fastForward("00:30");
@@ -74,6 +78,7 @@ test("tidak logout otomatis selama antrean belum kosong", async () => {
   assert.equal(await formLogin(page).count(), 0);
   await page.getByText("Menunggu persetujuan pemilik").waitFor();
   assert.equal(await page.evaluate(() => Antrean.jumlah()), 1);
+  await fetch(server.url + "/__uji/offline", { method: "POST", body: JSON.stringify({ on: false }) });
   await context.close();
 });
 
