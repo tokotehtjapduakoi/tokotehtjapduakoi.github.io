@@ -1,4 +1,4 @@
-/* Admin Kolam Koi: kasir mendaftarkan nota & memakai voucher; pemilik reset PIN & atur staf. */
+/* Admin Kolam Koi: kasir mendaftarkan nota (selama masa transisi ESB) & memakai voucher; pemilik reset PIN & atur staf. */
 (function(){
 "use strict";
 const CFG=window.KOLAM_CONFIG||{};
@@ -16,8 +16,10 @@ async function rpc(fn,a){const {data,error}=await sb.rpc(fn,a||{});if(error)thro
 async function q(p){const {data,error}=await p;if(error)throw error;return data}
 const owner=()=>sum&&sum.role==="pemilik";
 const mfaOk=()=>!!(sum&&sum.mfa);
-// Fungsi pemilik di server butuh verifikasi 2 langkah (aal2), jadi tab Nota (daftar/hapus nota) hanya untuk pemilik yang sudah verifikasi.
-const tabs=()=>[...(owner()&&mfaOk()?[["nota","Nota"]]:[]),["voucher","Voucher"],["member","Member"],...(owner()?[["staf","Staf"]]:[])];
+// Tab Nota (daftar/hapus nota ESB): untuk semua staf selama "Nota manual oleh kasir" menyala (masa transisi ESB),
+// sesudahnya hanya pemilik dengan verifikasi 2 langkah (server menolak yang lain).
+const ownerMfa=()=>owner()&&mfaOk();
+const tabs=()=>[...(ownerMfa()||(sum&&sum.nota_manual)?[["nota","Nota"]]:[]),["voucher","Voucher"],["member","Member"],...(owner()?[["staf","Staf"]]:[])];
 
 function nav(){const n=$("tabs");if(!sum){n.hidden=true;return}n.hidden=false;
   const T=tabs();if(!T.some(t=>t[0]===tab))tab=T[0][0];n.style.setProperty("--n",T.length);
@@ -64,8 +66,13 @@ function bindMfa(){const k=$("mfa-kode");
 let recent=null,legacyOn=null;
 async function vNota(){if(legacyOn===null)legacyOn=((await q(sb.from("kk_settings").select("legacy_nota_claim").eq("id",1).maybeSingle()))||{}).legacy_nota_claim===true;
   recent=recent||await q(sb.from("kk_receipts").select("nota,total,created_at,claimed_at").order("created_at",{ascending:false}).limit(60));
-  return head()+`<section class="card"><h2>Klaim nomor nota lama (ESB)</h2><p class="small muted">Bila menyala, pelanggan masih bisa memasukkan nomor nota ESB + total di Kolam Koi. Matikan bila semua nota sudah lewat kasir baru (kode klaim).</p>
-  <label class="row" for="lg" style="justify-content:flex-start;gap:10px"><input id="lg" type="checkbox"${legacyOn?" checked":""}><span>Klaim nomor nota lama (ESB)</span></label></section>
+  // sakelar hanya untuk pemilik dengan 2 langkah (fungsinya di server juga begitu)
+  return head()+(ownerMfa()?`<section class="card"><h2>Masa transisi ESB</h2>
+  <p class="small muted">Klaim nomor nota lama: bila menyala, pelanggan masih bisa memasukkan nomor nota ESB + total di Kolam Koi.</p>
+  <label class="row" for="lg" style="justify-content:flex-start;gap:10px"><input id="lg" type="checkbox"${legacyOn?" checked":""}><span>Klaim nomor nota lama (ESB)</span></label>
+  <p class="small muted">Nota manual oleh kasir: bila menyala, kasir boleh mendaftarkan dan menghapus nota ESB di tab ini. Bila mati, hanya pemilik.</p>
+  <label class="row" for="nm" style="justify-content:flex-start;gap:10px"><input id="nm" type="checkbox"${sum.nota_manual?" checked":""}><span>Nota manual oleh kasir</span></label>
+  <p class="small muted">Saat ESB sudah berhenti dipakai, matikan keduanya.</p></section>`:"")+`
   <section class="card"><h2>Daftarkan nota</h2><p class="small muted">Setelah pelanggan bayar di ESB, ketik nomor nota dan total persis seperti di struk. Pelanggan memasukkan nomor & total yang sama di HP-nya.</p>
   <form id="rf" style="display:grid;gap:12px"><label for="rn">Nomor nota<input id="rn" class="txt" autocomplete="off" autocapitalize="characters" placeholder="POS-1123-0310"></label>
   <label for="rt">Total belanja (Rp)<input id="rt" inputmode="numeric" autocomplete="off" placeholder="0"></label>
@@ -79,8 +86,11 @@ function parseCSV(txt){const lines=txt.trim().split(/\r?\n/).filter(Boolean);if(
   if(iN<0||iT<0)return {err:"Kolom nomor nota atau total tidak ditemukan. Kolom yang terbaca: "+h.join(", ")};
   return {rows:lines.slice(1).map(l=>{const c=l.split(sep).map(x=>x.trim().replace(/^"|"$/g,""));return {nota:(c[iN]||"").toUpperCase(),total:num(String(c[iT]||"").replace(/[.,]00$/,""))}}).filter(r=>r.nota&&r.total>0)}}
 function bindNota(){const rn=$("rn"),rt=$("rt"),ri=$("ri");rn.focus();
-  $("lg").onchange=async e=>{const on=e.target.checked;e.target.disabled=true;
+  const lg=$("lg");if(lg)lg.onchange=async e=>{const on=e.target.checked;e.target.disabled=true;
     try{await rpc("kk_set_legacy_claim",{p_on:on});legacyOn=on;toast(on?"Klaim nomor nota lama dinyalakan.":"Klaim nomor nota lama dimatikan.")}
+    catch(err){e.target.checked=!on;toast(errMsg(err))}finally{e.target.disabled=false}};
+  const nm=$("nm");if(nm)nm.onchange=async e=>{const on=e.target.checked;e.target.disabled=true;
+    try{await rpc("kk_set_kasir_nota_manual",{p_on:on});await refresh();toast(on?"Nota manual oleh kasir dinyalakan.":"Nota manual oleh kasir dimatikan.")}
     catch(err){e.target.checked=!on;toast(errMsg(err))}finally{e.target.disabled=false}};
   rt.oninput=()=>{const t=num(rt.value);rt.value=t?t.toLocaleString("id-ID"):"";ri.textContent=t?(pullsFor(t)?`Pelanggan akan dapat ${pullsFor(t)} tarikan`:`Di bawah ${rp(tiers[tiers.length-1][0])}: tidak dapat tarikan`):" "};
   $("rf").onsubmit=async e=>{e.preventDefault();if(busy)return;const n=rn.value.trim().toUpperCase(),t=num(rt.value);if(!n){rn.focus();return toast("Isi nomor nota.")}if(!t){rt.focus();return toast("Isi total belanja.")}

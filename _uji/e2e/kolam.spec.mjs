@@ -122,14 +122,37 @@ test("klaim lama: tautan kecil hanya bila sakelar menyala", () => lingkungan(asy
   await h.context.close();
 }));
 
-test("kasir tidak melihat tab Nota admin", () => lingkungan(async ({ server, browser }) => {
+test("kasir: tab Nota selama masa transisi ESB, hilang setelah nota manual dimatikan", () => lingkungan(async ({ server, browser, sql }) => {
   const h = await bukaHalaman(browser, server);
   await buka(h, server, "/kolam/admin/");
   await masuk(h.page, "ocha@uji.id");
-  await h.page.locator("#tabs").getByRole("button", { name: "Voucher" }).waitFor();
-  assert.deepEqual(await h.page.locator("#tabs button").allInnerTexts(), ["Voucher", "Member"]);
+  await h.page.locator("#tabs").getByRole("button", { name: "Nota" }).waitFor();
+  assert.deepEqual(await h.page.locator("#tabs button").allInnerTexts(), ["Nota", "Voucher", "Member"]);
   assert.equal(await h.page.getByRole("heading", { name: "Verifikasi 2 langkah" }).count(), 0);
+  // sakelar hanya untuk pemilik
+  assert.equal(await h.page.getByLabel("Klaim nomor nota lama (ESB)").count(), 0);
+  assert.equal(await h.page.getByLabel("Nota manual oleh kasir").count(), 0);
+  await h.page.getByLabel("Nomor nota").fill("esb-0001");
+  await h.page.getByLabel("Total belanja (Rp)").fill("45000");
+  await h.page.getByRole("button", { name: "Daftarkan" }).click();
+  await h.page.getByText("Terdaftar: ESB-0001").waitFor();
+  const r = (await sql.query("select r.total, u.email from kk_receipts r join auth.users u on u.id = r.created_by")).rows;
+  assert.deepEqual(r, [{ total: 45000, email: "ocha@uji.id" }]);
+  const hapus = h.page.getByRole("button", { name: "Hapus nota ESB-0001" });
+  await hapus.click();
+  await h.page.getByText("Yakin?").waitFor();
+  await hapus.click();
+  await h.page.getByText("Nota dihapus.").waitFor();
+  assert.equal((await sql.query("select count(*)::int n from kk_receipts")).rows[0].n, 0);
   await h.context.close();
+
+  await sql.query("update kk_settings set kasir_nota_manual = false");
+  const h2 = await bukaHalaman(browser, server);
+  await buka(h2, server, "/kolam/admin/");
+  await masuk(h2.page, "ocha@uji.id");
+  await h2.page.locator("#tabs").getByRole("button", { name: "Voucher" }).waitFor();
+  assert.deepEqual(await h2.page.locator("#tabs button").allInnerTexts(), ["Voucher", "Member"]);
+  await h2.context.close();
 }));
 
 test("pemilik (aal2): tab Nota, sakelar klaim lama, staf dengan nomor HP", () => lingkungan(async ({ server, browser, sql }) => {
@@ -144,6 +167,13 @@ test("pemilik (aal2): tab Nota, sakelar klaim lama, staf dengan nomor HP", () =>
   await lg.uncheck();
   await h.page.getByText("Klaim nomor nota lama dimatikan").waitFor();
   assert.equal((await sql.query("select legacy_nota_claim from kk_settings")).rows[0].legacy_nota_claim, false);
+  const nm = h.page.getByLabel("Nota manual oleh kasir");
+  assert.equal(await nm.isChecked(), true);
+  await nm.uncheck();
+  await h.page.getByText("Nota manual oleh kasir dimatikan").waitFor();
+  assert.equal((await sql.query("select kasir_nota_manual from kk_settings")).rows[0].kasir_nota_manual, false);
+  // pemilik 2 langkah tetap melihat tab Nota
+  assert.deepEqual(await h.page.locator("#tabs button").allInnerTexts(), ["Nota", "Voucher", "Member", "Staf"]);
   await h.page.locator("#tabs").getByRole("button", { name: "Staf" }).click();
   await h.page.getByLabel("Email kasir").fill("budi@uji.id");
   await h.page.getByLabel("Nama", { exact: true }).fill("Budi");
@@ -156,6 +186,7 @@ test("pemilik (aal2): tab Nota, sakelar klaim lama, staf dengan nomor HP", () =>
 
 test("pemilik tanpa 2 langkah di admin: daftar TOTP lewat KoiMfa, lalu tab Nota terbuka", () => lingkungan(async ({ server, browser, sql }) => {
   await sql.query("update auth.users set email = 'bos@uji.id' where email = 'pemilik@uji.id'"); // bukan pemilik* = aal1 di server tiruan
+  await sql.query("update kk_settings set kasir_nota_manual = false"); // sesudah masa transisi
   const h = await bukaHalaman(browser, server);
   const { context, page } = h;
   let terverifikasi = false;
