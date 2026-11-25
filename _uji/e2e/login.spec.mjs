@@ -37,7 +37,7 @@ test("setelah disetujui masuk layar jual", async () => {
   assert.match(daftar.find((d) => d.id === device).label, /^HP kasir depan · /);
   await rpcSebagai(server, "pemilik@uji.id", "pos_device_decide", { p_device: device, p_approve: true });
   await page.getByRole("button", { name: "Cek lagi" }).click();
-  await page.getByText("Buka shift dulu").waitFor(); // disetujui, tapi shift belum dibuka (UI shift: Task 11)
+  await page.getByRole("heading", { name: "Buka toko" }).waitFor(); // disetujui, tapi shift belum dibuka
   await rpcSebagai(server, "budi@uji.id", "pos_shift_open", { p_device: device, p_cash_start: 0 });
   await page.getByRole("button", { name: "Cek lagi" }).click();
   await page.getByRole("button", { name: "Teh Tarik" }).waitFor();

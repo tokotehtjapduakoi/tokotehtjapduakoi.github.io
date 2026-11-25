@@ -70,3 +70,19 @@ a.btn{display:flex;align-items:center;justify-content:center;text-decoration:non
 .bilah.off>p{color:#b25a08}
 .gagal{background:var(--paper);border:1px solid var(--marun);border-radius:12px;padding:10px 12px;display:grid;gap:8px;justify-items:start;font-weight:400}
 .antre{font-weight:600;color:#b25a08}
+/* Tab bawah, nota, kas */
+.tab{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;justify-content:center;gap:0;background:var(--paper);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+.tab[hidden]{display:none}
+.tab button{flex:1;max-width:187px;min-height:56px;border:none;background:transparent;color:var(--muted);font:600 15px var(--f-body);cursor:pointer;border-top:3px solid transparent}
+.tab button[aria-current="page"]{color:var(--hijau);border-top-color:var(--emas)}
+body.ada-tab .app{padding-bottom:calc(88px + env(safe-area-inset-bottom,0px))}
+body.ada-tab .toast{bottom:calc(env(safe-area-inset-bottom,0px) + 76px)}
+.nota-baris{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;min-height:52px;text-align:left;border:1.5px solid var(--line);border-radius:12px;background:var(--paper);color:var(--ink);font:500 15px var(--f-body);padding:8px 12px;cursor:pointer}
+.lencana{flex:none;font:600 12px var(--f-body);padding:3px 8px;border-radius:999px;border:1px solid var(--line)}
+.lencana.kuning{color:#8a5a00;border-color:#d9b04a;background:#fff4d6}
+.lencana.merah{color:var(--marun);border-color:var(--marun)}
+.lencana.abu{color:var(--muted)}
+.foto-nota{width:100%;max-height:320px;object-fit:contain;border-radius:10px;border:1px solid var(--line);background:#000}
+.batal{display:grid;gap:10px}
+.selisih{font:800 28px var(--f-display);color:var(--marun)}
+textarea{font:500 16px var(--f-body);padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);width:100%;resize:vertical}

@@ -749,7 +749,10 @@ begin
   return coalesce((
     select jsonb_agg(jsonb_build_object('id', n.id, 'no', n.no, 'client_at', n.client_at,
              'received_at', n.received_at, 'total', n.total, 'method', m.name, 'status', n.status,
-             'offline', n.offline, 'held', n.held,
+             'offline', n.offline, 'held', n.held, 'photo_path', n.photo_path,
+             'lines', coalesce((select jsonb_agg(jsonb_build_object('item', l.item_name, 'variant', l.variant_name,
+                                                                    'qty', l.qty, 'price', l.price, 'free', l.free) order by l.id)
+                                  from pos_nota_lines l where l.nota_id = n.id), '[]'::jsonb),
              'has_void_request', exists (select 1 from pos_void_requests q
                                           where q.nota_id = n.id and q.decided_at is null))
            order by n.received_at desc, n.no desc)

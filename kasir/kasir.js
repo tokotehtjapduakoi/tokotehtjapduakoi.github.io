@@ -9,7 +9,7 @@ const putus=e=>/Failed to fetch|NetworkError|Load failed|network error/i.test((e
 const errMsg=e=>putus(e)?"Koneksi internet bermasalah.":((e&&e.message)||String(e));
 const DIAM_MAKS=30*60*1000; // logout otomatis setelah 30 menit tanpa sentuhan/ketikan
 
-const S={sb:null,user:null,me:null,catalog:null,device:null,screen:"masuk",antre:[]};
+const S={sb:null,user:null,me:null,catalog:null,device:null,screen:"masuk",antre:[],tab:"jual",tutup:null};
 let galat="",sibuk=false,emailTerakhir="";
 async function rpc(fn,a){const {data,error}=await S.sb.rpc(fn,a||{});if(error)throw error;return data}
 // Nota kasir ini yang masih menunggu dikirim (yang ditolak server tidak dihitung: tetap tersimpan untuk pemilik).
@@ -142,7 +142,9 @@ function vSelesai(){const s=J.selesai,r=s.hasil;
 
 function vJual(){
   const kepala=`<div class="head"><h1>Kasir</h1><button type="button" class="btn sm ghost" id="out">Keluar</button></div><p class="small muted">${esc(S.me.name||S.user.email)}</p>`;
-  if(!S.me.shift)return kepala+`<section class="card"><h2>Buka shift dulu</h2><p class="muted">Shift belum dibuka, jadi belum bisa berjualan.</p><button type="button" class="btn" id="cek-shift">Cek lagi</button></section>`;
+  if(!S.me.shift)return kepala+vTanpaShift();
+  if(S.tab==="nota")return kepala+vNota();
+  if(S.tab==="kas")return kepala+vKas();
   return kepala+(J.tahap==="bayar"?vBayar():J.tahap==="selesai"?vSelesai():vMenu())}
 
 function tambah(v,it){const l=J.cart.find(x=>String(x.vid)===String(v.id));
@@ -192,8 +194,9 @@ async function lunas(){if(!bisaLunas())return;J.sibuk=true;J.pesan="";segarBayar
   J.sibuk=false;await segarBilah();render()}
 
 function bindJual(){
-  const cs=$("cek-shift");if(cs)cs.onclick=async()=>{cs.disabled=true;try{await muatMe()}catch(e){toast(errMsg(e))}render()};
-  if(!S.me.shift)return;
+  if(!S.me.shift){bindTanpaShift();return}
+  if(S.tab==="nota"){bindNota();return}
+  if(S.tab==="kas"){bindKas();return}
   if(J.tahap==="selesai"){$("baru").onclick=()=>{J=J0();render()};return}
   if(J.tahap==="bayar"){bindBayar();return}
   document.querySelectorAll("[data-item]").forEach(b=>b.onclick=()=>{J.sheet=b.dataset.item;render()});
@@ -219,6 +222,182 @@ function bindBayar(){
     catch(e){if(!/dibatalkan|Tidak ada foto/.test(e.message))toast(errMsg(e))}};
   $("lunas").onclick=lunas;segarBayar()}
 
+/* ---------- Shift: buka toko, terima laci ---------- */
+const B0=()=>({modal:"",hitung:"",sibuk:false,pesan:"",hasil:null});
+let B=B0();
+const angka=s=>parseInt(digit(s)||"0",10);
+const selisihTeks=n=>(n<0?"−":"+")+rp(Math.abs(n));
+function vTanpaShift(){const w=S.me.handover_waiting;
+  if(B.hasil){const x=B.hasil.selisih;
+    return `<section class="card"><h2>Laci diterima</h2>
+    ${x===0?`<p>Hitunganmu cocok dengan kasir sebelumnya. Tidak ada selisih.</p>`:`<p class="selisih" role="status">Selisih ${esc(selisihTeks(x))}</p><p class="muted small">Hitunganmu ${x<0?"kurang":"lebih"} ${rp(Math.abs(x))} dari hitungan kasir sebelumnya. Pemilik akan melihat selisih ini.</p>`}
+    <button type="button" class="btn" id="mulai-jual">Mulai jual</button></section>`}
+  if(S.tutup)return `<section class="card"><h2>${S.tutup.handover?"Laci diserahkan":"Toko ditutup"}</h2>
+    <p class="muted">${S.tutup.handover?"Menunggu kasir berikutnya menerima laci. Kamu bisa keluar.":"Shift sudah ditutup. Terima kasih!"}</p>
+    ${S.tutup.handover?"":`<button type="button" class="btn" id="buka-lagi">Buka toko lagi</button>`}</section>`;
+  const pesan=`<p class="err" id="pesan" role="alert">${esc(B.pesan)}</p>`;
+  if(w)return `<section class="card"><h2>Terima laci dari ${esc(w.cashier_name||"kasir sebelumnya")}</h2>
+    <p class="muted">Hitung uang di laci sekarang, lalu ketik jumlahnya.</p>
+    <label for="hitung">Uang di laci (Rp)<input id="hitung" inputmode="numeric" autocomplete="off" value="${esc(B.hitung)}"></label>${pesan}
+    <button type="button" class="btn" id="terima"${B.sibuk||B.hitung===""?" disabled":""}>Terima laci</button>
+    <button type="button" class="btn ghost" id="cek-shift">Cek lagi</button></section>`;
+  return `<section class="card"><h2>Buka toko</h2><p class="muted">Ketik modal awal: uang yang ada di laci sekarang.</p>
+    <label for="modal">Modal awal di laci (Rp)<input id="modal" inputmode="numeric" autocomplete="off" value="${esc(B.modal)}"></label>${pesan}
+    <button type="button" class="btn" id="buka"${B.sibuk||B.modal===""?" disabled":""}>Buka toko</button>
+    <button type="button" class="btn ghost" id="cek-shift">Cek lagi</button></section>`}
+function bindTanpaShift(){
+  const cs=$("cek-shift");if(cs)cs.onclick=async()=>{cs.disabled=true;try{await muatMe()}catch(e){toast(errMsg(e))}render()};
+  const ml=$("mulai-jual");if(ml)ml.onclick=async()=>{B=B0();try{await muatMe()}catch(e){toast(errMsg(e))}render()};
+  const bl=$("buka-lagi");if(bl)bl.onclick=()=>{S.tutup=null;render()};
+  const isi=(id,kunci,tombol)=>{const e=$(id);if(e)e.oninput=()=>{B[kunci]=digit(e.value);e.value=B[kunci];$(tombol).disabled=B.sibuk||B[kunci]===""}};
+  isi("modal","modal","buka");isi("hitung","hitung","terima");
+  const kerja=(id,fn)=>{const b=$(id);if(b)b.onclick=async()=>{if(B.sibuk)return;B.sibuk=true;B.pesan="";b.disabled=true;
+    try{await fn()}catch(e){B.pesan=errMsg(e)}B.sibuk=false;render()}};
+  kerja("buka",async()=>{await rpc("pos_shift_open",{p_device:S.device,p_cash_start:angka(B.modal)});S.tutup=null;B=B0();await muatMe()});
+  kerja("terima",async()=>{const r=await rpc("pos_shift_receive",{p_device:S.device,p_count:angka(B.hitung)});
+    S.tutup=null;B={...B0(),hasil:{selisih:r.selisih}}})}
+
+/* ---------- Kas: serah terima / tutup toko ---------- */
+const K0=()=>({mode:null,hitung:"",foto:null,fotoUrl:null,fotoPath:null,sibuk:false,pesan:""});
+let K=K0();
+const acak=()=>{const b=new Uint8Array(4);crypto.getRandomValues(b);return Array.from(b,x=>x.toString(16).padStart(2,"0")).join("")};
+const nPending=()=>S.antre.filter(it=>!it.error&&Antrean.milik(it)===S.user.id).length;
+const pesanAntre=n=>`Masih ada ${n} nota belum terkirim. Sambungkan internet dulu.`;
+function bisaTutup(){return !K.sibuk&&K.hitung!==""&&!!K.foto}
+function vKas(){const sh=S.me.shift,n=nPending(),kunci=n>0;
+  const mulaiDari=sh.opened_at?waktuHP(sh.opened_at):"";
+  const kepala=`<section class="card"><h2>Kas</h2><p class="small muted">Shift dibuka ${esc(mulaiDari)} · modal awal ${rp(sh.cash_start)}</p>
+    ${kunci?`<p class="err" role="alert">${esc(pesanAntre(n))}</p>`:""}
+    <div class="aksi"><button type="button" class="btn${K.mode==="serah"?"":" ghost"}" id="m-serah"${kunci?" disabled":""}>Serah terima ke kasir berikutnya</button>
+    <button type="button" class="btn${K.mode==="tutup"?"":" ghost"}" id="m-tutup"${kunci?" disabled":""}>Tutup toko</button></div></section>`;
+  if(!K.mode||kunci)return kepala;
+  return kepala+`<section class="card"><h2>${K.mode==="serah"?"Serah terima laci":"Tutup toko"}</h2>
+    <p class="muted">Hitung semua uang di laci, ketik jumlahnya, lalu foto laci.</p>
+    <label for="hitung">Uang di laci (Rp)<input id="hitung" inputmode="numeric" autocomplete="off" value="${esc(K.hitung)}"></label>
+    <div class="fotobox"><button type="button" class="btn ghost" id="foto-laci"${K.sibuk?" disabled":""}>${K.foto?"Ganti foto laci":"Ambil foto laci"}</button>
+    ${K.fotoUrl?`<img class="prat" src="${esc(K.fotoUrl)}" alt="Pratinjau foto laci">`:`<span class="small muted">Foto laci wajib.</span>`}</div>
+    <p class="err" id="pesan" role="alert">${esc(K.pesan)}</p>
+    <button type="button" class="btn lunas" id="kirim-tutup"${bisaTutup()?"":" disabled"}>${K.mode==="serah"?"Serahkan laci":"Tutup toko sekarang"}</button></section>`}
+function bindKas(){
+  const m=(id,mode)=>{const b=$(id);if(b)b.onclick=()=>{K.mode=mode;K.pesan="";render()}};m("m-serah","serah");m("m-tutup","tutup");
+  const h=$("hitung");if(h)h.oninput=()=>{K.hitung=digit(h.value);h.value=K.hitung;$("kirim-tutup").disabled=!bisaTutup()};
+  const f=$("foto-laci");if(f)f.onclick=async()=>{try{const x=await KasirFoto.ambil();const k=await KasirFoto.kecilkan(x);
+      if(K.fotoUrl)URL.revokeObjectURL(K.fotoUrl);K.foto=k;K.fotoUrl=URL.createObjectURL(k);K.fotoPath=null;K.pesan="";render()}
+    catch(e){if(!/dibatalkan|Tidak ada foto/.test(e.message))toast(errMsg(e))}};
+  const t=$("kirim-tutup");if(t)t.onclick=tutupShift}
+async function tutupShift(){if(!bisaTutup())return;
+  const n=await antrean();if(n>0){K.pesan=pesanAntre(n);render();return}
+  K.sibuk=true;K.pesan="";$("kirim-tutup").disabled=true;$("foto-laci").disabled=true;
+  const serah=K.mode==="serah",sid=S.me.shift.id;
+  try{// Foto laci terunggah sekali; kalau tutup shift gagal lalu diulang, foto yang sama dipakai lagi.
+    if(!K.fotoPath){const path=`${S.user.id}/laci-${sid}-${acak()}.jpg`;
+      const {error}=await S.sb.storage.from("bukti").upload(path,K.foto,{contentType:"image/jpeg",upsert:false});
+      if(error)throw error;K.fotoPath=path}
+    await rpc("pos_shift_close",{p_cash_counted:angka(K.hitung),p_photo_path:K.fotoPath,p_handover:serah});
+    if(K.fotoUrl)URL.revokeObjectURL(K.fotoUrl);
+    K=K0();J=J0();N=N0();B=B0();S.tab="jual";S.tutup={handover:serah,shift:sid};
+    await muatMe().catch(()=>{S.me={...S.me,shift:null}})}
+  catch(e){K.pesan=errMsg(e)}
+  K.sibuk=false;render()}
+
+/* ---------- Nota: nota shift ini + antrean, ajukan batal ---------- */
+const N0=()=>({server:null,galat:"",memuat:false,sel:null,foto:null,fotoMuat:null,batal:null,hapusTap:null});
+let N=N0();
+const ALASAN=["Salah input","Pelanggan batal","Lainnya"];
+const waktuHP=iso=>{const d=new Date(iso);if(isNaN(d))return "";
+  return new Intl.DateTimeFormat("id-ID",{timeZone:"Asia/Makassar",hour:"2-digit",minute:"2-digit",hour12:false}).format(d).replace(".",":")};
+const lapor=()=>bacaJson("kasir.lapor")||[];
+const sudahLapor=id=>lapor().includes(id);
+const catatLapor=id=>{const a=lapor();if(!a.includes(id)){a.push(id);tulisJson("kasir.lapor",a.slice(-200))}};
+const antreKu=()=>S.antre.filter(it=>S.user&&Antrean.milik(it)===S.user.id).slice().sort((a,b)=>b.dibuat-a.dibuat);
+const namaMetode=id=>{const m=cat().methods.find(x=>String(x.id)===String(id));return m?m.name:"-"};
+function barisAntre(it){const p=it.payload||{},peta={};
+  for(const i of cat().items)for(const v of i.variants||[])peta[v.id]={item:i.name,variant:v.name,price:v.price};
+  return (p.lines||[]).map(l=>({qty:l.qty,...(peta[l.variant_id]||{item:"Menu",variant:"",price:0})}))}
+const linkLaporWa=t=>"https://wa.me/"+(CFG.waNomor||"6281345306571")+"?text="+encodeURIComponent(t);
+function teksLaporAntre(it){const p=it.payload||{};
+  return ["Nota kasir gagal terkirim ke server.",`Kasir: ${S.me&&S.me.name||""}`,`ID: ${it.id}`,`Waktu di HP: ${p.client_at||"-"}`,
+    `Total: ${rp(p.total)} (${namaMetode(p.method_id)})`,...barisAntre(it).map(l=>`${l.qty}× ${l.item} ${l.variant}`),`Alasan: ${it.error}`].join("\n")}
+async function muatNota(){if(N.memuat||!S.user)return;N.memuat=true;
+  try{N.server=await rpc("pos_my_notas");N.galat=""}
+  catch(e){N.galat=putus(e)?"Daftar nota dari server butuh internet.":errMsg(e)}
+  N.memuat=false;if(S.screen==="jual"&&S.tab==="nota")render()}
+function ketukBaris(tipe,id){N.sel={tipe,id};N.foto=null;N.fotoMuat=null;N.batal=null;N.hapusTap=null;render()}
+function vBaris(){const q=antreKu(),sv=N.server||[];
+  const baris=[...q.map(it=>{const p=it.payload||{};
+      return `<button type="button" class="nota-baris" data-q="${esc(it.id)}"><span><b>${rp(p.total)}</b> · ${esc(namaMetode(p.method_id))}<span class="small muted"> · ${esc(waktuHP(p.client_at))}</span></span>
+      <span class="lencana ${it.error?"merah":"kuning"}">${it.error?"Ditolak server":"Belum terkirim"}</span></button>`}),
+    ...sv.map(n=>`<button type="button" class="nota-baris" data-n="${esc(n.id)}"><span><b>${esc(n.no)}</b> · ${rp(n.total)}<span class="small muted"> · ${esc(n.method)} · ${esc(waktuHP(n.client_at))}</span></span>
+      ${n.status==="batal"?`<span class="lencana abu">Batal</span>`:n.has_void_request?`<span class="lencana kuning">Menunggu persetujuan</span>`:""}</button>`)];
+  return baris.length?baris.join(""):(N.memuat?`<p class="muted">Memuat...</p>`:`<p class="muted">Belum ada nota di shift ini.</p>`)}
+function vNota(){
+  if(N.sel){const d=N.sel.tipe==="server"?vDetailServer():vDetailAntre();if(d)return d;N.sel=null}
+  return `<section class="card"><div class="head"><h2>Nota shift ini</h2><button type="button" class="btn sm ghost" id="muat-nota"${N.memuat?" disabled":""}>Muat ulang</button></div>
+  ${N.galat?`<p class="err small" role="alert">${esc(N.galat)}</p>`:""}${vBaris()}</section>`}
+function vDetailServer(){const n=(N.server||[]).find(x=>x.id===N.sel.id);if(!n)return "";
+  const lines=(n.lines||[]).map(l=>`<div class="rg"><span>${l.qty}× ${esc(l.item)} ${esc(l.variant)}${l.free?" (gratis)":""}</span><span>${rp(l.price*l.qty)}</span></div>`).join("");
+  const status=n.status==="batal"?"Batal":n.has_void_request?"Menunggu persetujuan":"Lunas";
+  return `<section class="card"><div class="head"><h2>Nota ${esc(n.no)}</h2><button type="button" class="btn sm ghost" id="balik-nota">← Daftar</button></div>
+  <p class="small muted">${esc(waktuHP(n.client_at))} · ${esc(n.method)}${n.offline?" · dibuat offline":""}</p>
+  ${lines}<div class="total"><span>Total</span><b>${rp(n.total)}</b></div>
+  <p>Status: <b id="status-nota">${esc(status)}</b></p>
+  ${n.photo_path?(N.foto&&N.foto.id===n.id?(N.foto.url?`<img class="foto-nota" src="${esc(N.foto.url)}" alt="Foto bukti nota">`:`<p class="small muted">Foto tidak bisa dimuat.</p>`):`<p class="small muted">Memuat foto...</p>`):""}
+  ${n.status==="lunas"&&!n.has_void_request?(N.batal?vBatal():`<button type="button" class="btn ghost" id="ajukan">Ajukan batal</button>`):""}</section>`}
+function vBatal(){const b=N.batal,ok=alasanBatal().length>=5;
+  return `<div class="batal"><h3>Alasan batal</h3><div class="metode">${ALASAN.map(a=>`<button type="button" data-alasan="${esc(a)}" aria-pressed="${b.alasan===a}">${esc(a)}</button>`).join("")}</div>
+  ${b.alasan==="Lainnya"?`<label for="alasan-teks">Tulis alasan (minimal 5 huruf)<textarea id="alasan-teks" rows="3" maxlength="300">${esc(b.teks)}</textarea></label>`:""}
+  <p class="err" id="pesan" role="alert">${esc(b.pesan)}</p>
+  <button type="button" class="btn lunas" id="kirim-batal"${ok&&!b.sibuk?"":" disabled"}>Kirim pengajuan</button>
+  <button type="button" class="btn ghost" id="batal-x">Tidak jadi</button></div>`}
+const alasanBatal=()=>{const b=N.batal;return !b||!b.alasan?"":b.alasan==="Lainnya"?b.teks.trim():b.alasan};
+function vDetailAntre(){const it=S.antre.find(x=>x.id===N.sel.id);if(!it)return "";const p=it.payload||{};
+  const lines=barisAntre(it).map(l=>`<div class="rg"><span>${l.qty}× ${esc(l.item)} ${esc(l.variant)}</span><span>${rp(l.price*l.qty)}</span></div>`).join("");
+  const lap=sudahLapor(it.id),yakin=N.hapusTap===it.id;
+  return `<section class="card"><div class="head"><h2>Nota di HP</h2><button type="button" class="btn sm ghost" id="balik-nota">← Daftar</button></div>
+  <p class="small muted">${esc(waktuHP(p.client_at))} · ${esc(namaMetode(p.method_id))}</p>${lines}
+  <div class="total"><span>Total</span><b>${rp(p.total)}</b></div>
+  ${it.error?`<p class="err" role="alert">Ditolak server: ${esc(it.error)}</p>
+    <a class="btn" id="lapor" data-lapor="${esc(it.id)}" target="_blank" rel="noopener" href="${esc(linkLaporWa(teksLaporAntre(it)))}">Laporkan ke pemilik</a>
+    <button type="button" class="btn ${yakin?"":"ghost"}" id="hapus-hp"${lap?"":" disabled"}>${yakin?"Yakin? Ketuk lagi untuk menghapus":"Hapus dari HP"}</button>
+    ${lap?"":`<p class="small muted">Laporkan ke pemilik dulu, baru nota ini bisa dihapus dari HP.</p>`}`
+   :`<p class="antre">Belum terkirim. Akan terkirim otomatis saat ada internet.</p>`}</section>`}
+async function muatFoto(n){if(N.fotoMuat===n.id)return;N.fotoMuat=n.id;let url=null;
+  try{const r=await S.sb.storage.from("bukti").createSignedUrl(n.photo_path,300);if(!r.error&&r.data)url=r.data.signedUrl}catch(e){}
+  if(N.sel&&N.sel.id===n.id){N.foto={id:n.id,url};if(S.tab==="nota")render()}}
+function bindNota(){
+  const mn=$("muat-nota");if(mn)mn.onclick=()=>muatNota();
+  document.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>ketukBaris("server",b.dataset.n));
+  document.querySelectorAll("[data-q]").forEach(b=>b.onclick=()=>ketukBaris("antre",b.dataset.q));
+  const bk=$("balik-nota");if(bk)bk.onclick=()=>{N.sel=null;N.batal=null;N.hapusTap=null;render()};
+  if(N.sel&&N.sel.tipe==="server"){const n=(N.server||[]).find(x=>x.id===N.sel.id);if(n&&n.photo_path)muatFoto(n)}
+  const aj=$("ajukan");if(aj)aj.onclick=()=>{N.batal={alasan:"",teks:"",pesan:"",sibuk:false};render()};
+  document.querySelectorAll("[data-alasan]").forEach(b=>b.onclick=()=>{N.batal.alasan=b.dataset.alasan;N.batal.pesan="";render()});
+  const at=$("alasan-teks");if(at)at.oninput=()=>{N.batal.teks=at.value;$("kirim-batal").disabled=alasanBatal().length<5};
+  const bx=$("batal-x");if(bx)bx.onclick=()=>{N.batal=null;render()};
+  const kb=$("kirim-batal");if(kb)kb.onclick=async()=>{if(N.batal.sibuk||alasanBatal().length<5)return;N.batal.sibuk=true;kb.disabled=true;
+    try{await rpc("pos_void_request",{p_nota:N.sel.id,p_reason:alasanBatal()});N.batal=null;
+      N.server=await rpc("pos_my_notas")}
+    catch(e){if(N.batal){N.batal.pesan=errMsg(e);N.batal.sibuk=false}}
+    render()};
+  const hp=$("hapus-hp");if(hp)hp.onclick=async()=>{const id=N.sel.id;if(!sudahLapor(id))return;
+    if(N.hapusTap!==id){N.hapusTap=id;render();return}
+    try{await Antrean.hapus(id)}catch(e){toast(errMsg(e));return}
+    N.sel=null;N.hapusTap=null;await segarBilah();render()}}
+
+/* ---------- Tab bawah (daftar bisa ditambah, mis. tab pemilik) ---------- */
+const TAB=[["jual","Jual"],["nota","Nota"],["kas","Kas"]];
+function renderTab(){let n=$("tab");
+  if(!n){n=document.createElement("nav");n.id="tab";n.className="tab";n.setAttribute("aria-label","Menu kasir");document.body.appendChild(n)}
+  const tampil=S.screen==="jual"&&!!S.me&&!!S.me.shift;n.hidden=!tampil;document.body.classList.toggle("ada-tab",tampil);
+  if(!tampil){n.innerHTML="";return}
+  n.innerHTML=TAB.map(t=>`<button type="button" data-tab="${t[0]}"${S.tab===t[0]?' aria-current="page"':""}>${t[1]}</button>`).join("");
+  n.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>pindahTab(b.dataset.tab))}
+async function pindahTab(t){if(S.tab===t)return;S.tab=t;N.sel=null;N.batal=null;N.hapusTap=null;
+  await segarBilah();
+  render();if(t==="nota")muatNota()}
+document.addEventListener("click",e=>{const a=e.target.closest&&e.target.closest("a[data-lapor]");
+  if(a){catatLapor(a.dataset.lapor);setTimeout(()=>{if(S.screen==="jual"&&S.tab==="nota")render()},0)}},true);
+
 function vPutus(){return `<div class="head"><h1>Kasir</h1></div><section class="card"><h2>Koneksi internet bermasalah</h2>
   <p class="muted">Belum bisa memeriksa akun dan HP ini. Periksa sinyal, lalu coba lagi.</p><button type="button" class="btn" id="ulang">Coba lagi</button></section>`}
 function bindPutus(){$("ulang").onclick=()=>mulai("")}
@@ -226,7 +405,7 @@ function bindPutus(){$("ulang").onclick=()=>mulai("")}
 function render(){const app=$("app");
   if(!S.sb){app.innerHTML=`<section class="card"><h2>Belum disambungkan</h2><p class="muted">Isi <code>kasir/config.js</code> dengan Project URL dan kunci publishable Supabase.</p></section>`;return}
   const V={masuk:[vMasuk,bindMasuk],tunggu:[vTunggu,bindTunggu],jual:[vJual,bindJual],putus:[vPutus,bindPutus]}[S.screen];
-  app.innerHTML=V[0]();V[1]();const o=$("out");if(o)o.onclick=()=>keluar(false);renderBilah()}
+  app.innerHTML=V[0]();V[1]();const o=$("out");if(o)o.onclick=()=>keluar(false);renderBilah();renderTab()}
 
 /* ---------- Alur ---------- */
 async function muatMe(){S.me=await rpc("pos_me",{p_device:S.device});
@@ -246,7 +425,7 @@ async function keluar(otomatis){const n=await antrean();
   const r=await S.sb.auth.signOut().catch(e=>({error:e}));
   if(r&&r.error)await S.sb.auth.signOut({scope:"local"}).catch(()=>{});
   localStorage.removeItem("kasir.me");
-  Object.assign(S,{user:null,me:null,catalog:null,screen:"masuk",antre:[]});J=J0();galat="";render()}
+  Object.assign(S,{user:null,me:null,catalog:null,screen:"masuk",antre:[],tab:"jual",tutup:null});J=J0();K=K0();N=N0();B=B0();galat="";render()}
 
 /* ---------- Logout otomatis ---------- */
 let aktif=Date.now();
@@ -267,10 +446,14 @@ async function kirimAntrean(){if(!S.user||J.sibuk)return;
 // Nota yang sedang tampil di layar Selesai sebagai "Tersimpan di HP" sudah sampai: tampilkan nomor dari server.
 function terapkanHasil(r){const s=J.selesai,ok=s&&s.antre&&r&&r.hasil[s.id];
   if(!ok)return;Object.assign(s,{hasil:ok.hasil,kode:ok.kode,antre:false});s.teks=teksSelesai(s);if(J.tahap==="selesai")render()}
-async function segarBilah(){try{S.antre=await Antrean.daftar()}catch(e){S.antre=[]}renderBilah()}
+let sidikAntre="";
+async function segarBilah(){try{S.antre=await Antrean.daftar()}catch(e){S.antre=[]}renderBilah();
+  // Isi antrean berubah (terkirim/ditolak): perbarui daftar Nota bila sedang terbuka.
+  const sidik=S.antre.map(it=>it.id+(it.error?"!":"")).join();
+  if(sidik!==sidikAntre){sidikAntre=sidik;if(S.screen==="jual"&&S.tab==="nota"&&!N.sel&&!N.memuat)muatNota()}}
 function linkLapor(it){const p=it.payload||{};
   const t=["Nota kasir gagal terkirim ke server.",`ID: ${it.id}`,`Waktu di HP: ${p.client_at||"-"}`,`Total: ${rp(p.total)}`,`Alasan: ${it.error}`].join("\n");
-  return "https://wa.me/?text="+encodeURIComponent(t)}
+  return linkLaporWa(t)}
 function renderBilah(){const b=$("bilah");if(!S.user){b.hidden=true;return}
   const on=daring(),punyaku=it=>Antrean.milik(it)===S.user.id;
   const n=S.antre.filter(it=>!it.error&&punyaku(it)).length,lain=S.antre.filter(it=>!it.error&&!punyaku(it)).length;
@@ -279,7 +462,7 @@ function renderBilah(){const b=$("bilah");if(!S.user){b.hidden=true;return}
   b.innerHTML=`<p><span class="titik" aria-hidden="true"></span>${on?"Online":"Offline"}${n?` · ${n} nota menunggu`:""}</p>
   ${lain?`<p class="small">${lain} nota milik kasir lain menunggu. Terkirim saat kasir itu masuk di HP ini.</p>`:""}
   ${gagal.map(it=>`<div class="gagal"><p class="small">Nota ${esc(rp(it.payload&&it.payload.total))} ditolak server: ${esc(it.error)}</p>
-    <a class="btn sm" target="_blank" rel="noopener" href="${esc(linkLapor(it))}">Laporkan ke pemilik</a></div>`).join("")}`}
+    <a class="btn sm" data-lapor="${esc(it.id)}" target="_blank" rel="noopener" href="${esc(linkLapor(it))}">Laporkan ke pemilik</a></div>`).join("")}`}
 function ubahSinyal(){renderBilah();if(S.screen==="jual"&&J.tahap==="bayar"&&!J.sibuk)render()}
 addEventListener("online",()=>{ubahSinyal();kirimAntrean()});
 addEventListener("offline",ubahSinyal);

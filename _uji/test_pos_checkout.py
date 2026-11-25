@@ -300,6 +300,10 @@ def test_nota_shift_saya(db, toko):
     assert [x["no"] for x in rows] == [b["no"], a["no"]]
     assert rows[0]["method"] == "QRIS" and rows[0]["total"] == 30000 and rows[0]["status"] == "lunas"
     assert rows[0]["has_void_request"] is False
+    # rincian untuk layar Nota kasir: foto bukti dan baris nota
+    assert rows[0]["photo_path"] and rows[0]["photo_path"] != rows[1]["photo_path"]
+    assert len(rows[0]["lines"]) == 1 and set(rows[0]["lines"][0]) == {"item", "variant", "qty", "price", "free"}
+    assert sum(l["qty"] * l["price"] for l in rows[0]["lines"]) == rows[0]["total"]
     # shift berikutnya (kasir lain) hanya melihat notanya sendiri; shift kasir pertama sudah tertutup
     lain = db.user("lain@x.id", peran="kasir")
     toko.buka_shift(lain)
