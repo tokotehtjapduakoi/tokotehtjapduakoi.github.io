@@ -228,7 +228,7 @@ def test_nota_terkunci(db, toko):
     assert klien == {"pos_device_request", "pos_devices_list", "pos_device_decide", "pos_catalog", "pos_item_save",
                      "pos_variant_save", "pos_method_save", "pos_discount_save", "pos_me", "pos_checkout",
                      "pos_my_notas", "pos_shift_open", "pos_shift_close", "pos_shift_receive",
-                     "pos_void_request", "pos_void_pending", "pos_void_decide"}
+                     "pos_void_request", "pos_void_pending", "pos_void_decide", "pos_report"}
 
 
 def voucher(db, kode="TK-ABCDE"):

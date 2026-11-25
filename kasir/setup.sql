@@ -837,6 +837,11 @@ begin
   if found then
     update kk_receipts set voided_at = now() where nota = r.nota;
     if r.claimed_by is not null then
+      -- hitungan member yang naik saat klaim ikut diturunkan (hanya klaim yang menarik kartu; tak boleh di bawah 0)
+      if exists (select 1 from kk_pulls where nota = r.nota) then
+        update kk_members set trx = greatest(trx - 1, 0), spent = greatest(spent - r.total, 0)
+         where user_id = r.claimed_by;
+      end if;
       -- tarik kartu hasil klaim: satu kartu per baris tarikan, selama inventori member masih ada
       for pl in select id, member_id, card_id from kk_pulls where nota = r.nota order by id loop
         select qty into have from kk_inventory where member_id = pl.member_id and card_id = pl.card_id for update;
@@ -859,6 +864,98 @@ begin
   return jsonb_build_object('approved', true, 'cards_missing', to_jsonb(missing));
 end $$;
 
+-- ---------- Laporan harian (pemilik) ----------
+-- Hari = tanggal WITA dari client_at nota (nota offline dihitung di hari ia dijual); shift di hari ia dibuka.
+create or replace function public.pos_report(p_day date default null) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  d date := coalesce(p_day, (now() at time zone 'Asia/Makassar')::date);
+  v_omzet bigint; v_notas int;
+begin
+  if not kk_is_owner() then raise exception 'Khusus pemilik'; end if;
+  select coalesce(sum(total), 0), count(*) into v_omzet, v_notas
+    from pos_notas where status = 'lunas' and (client_at at time zone 'Asia/Makassar')::date = d;
+  return jsonb_build_object(
+    'day', d,
+    'omzet', v_omzet,
+    'notas', v_notas,
+    'avg', case when v_notas = 0 then 0 else round(v_omzet::numeric / v_notas)::bigint end,
+    'by_method', coalesce((
+      select jsonb_agg(jsonb_build_object('name', x.name, 'total', x.total, 'count', x.cnt) order by x.total desc, x.name)
+        from (select m.name, sum(n.total) as total, count(*) as cnt
+                from pos_notas n join pos_pay_methods m on m.id = n.method_id
+               where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d
+               group by m.name) x), '[]'::jsonb),
+    'by_cashier', coalesce((
+      select jsonb_agg(jsonb_build_object('name', x.name, 'total', x.total, 'count', x.cnt) order by x.total desc, x.name)
+        from (select coalesce(st.name, '') as name, sum(n.total) as total, count(*) as cnt
+                from pos_notas n left join kk_staff st on st.user_id = n.cashier
+               where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d
+               group by coalesce(st.name, '')) x), '[]'::jsonb),
+    'top_items', coalesce((
+      select jsonb_agg(jsonb_build_object('item', x.item, 'variant', x.variant, 'qty', x.qty, 'total', x.total)
+                       order by x.qty desc, x.total desc, x.item, x.variant)
+        from (select * from (
+                select l.item_name as item, l.variant_name as variant, sum(l.qty) as qty,
+                       sum(case when l.free then 0 else l.qty * l.price end) as total
+                  from pos_nota_lines l join pos_notas n on n.id = l.nota_id
+                 where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d
+                 group by l.item_name, l.variant_name) t
+               order by qty desc, total desc, item, variant limit 10) x), '[]'::jsonb),
+    'discounts', (select jsonb_build_object('count', count(*), 'total', coalesce(sum(discount_amt), 0))
+                    from pos_notas where status = 'lunas' and discount_amt > 0
+                     and (client_at at time zone 'Asia/Makassar')::date = d),
+    'voids', coalesce((
+      select jsonb_agg(jsonb_build_object('no', n.no, 'total', n.total, 'reason', q.reason,
+                         'by', coalesce(rq.name, ''), 'approved_by', coalesce(ap.name, '')) order by n.no)
+        from pos_notas n
+        join pos_void_requests q on q.nota_id = n.id and q.approved
+        left join kk_staff rq on rq.user_id = q.requested_by
+        left join kk_staff ap on ap.user_id = q.decided_by
+       where n.status = 'batal' and (n.client_at at time zone 'Asia/Makassar')::date = d), '[]'::jsonb),
+    'pending_voids', (select count(*) from pos_void_requests q join pos_notas n on n.id = q.nota_id
+                       where q.decided_at is null and (n.client_at at time zone 'Asia/Makassar')::date = d),
+    'offline', jsonb_build_object(
+      'count', (select count(*) from pos_notas where status = 'lunas' and offline
+                   and (client_at at time zone 'Asia/Makassar')::date = d),
+      'mismatch', coalesce((select jsonb_agg(jsonb_build_object('no', no, 'total', total, 'server_total', server_total) order by no)
+                              from pos_notas where status = 'lunas' and price_mismatch
+                               and (client_at at time zone 'Asia/Makassar')::date = d), '[]'::jsonb),
+      'held', (select count(*) from pos_notas where status = 'lunas' and held
+                  and (client_at at time zone 'Asia/Makassar')::date = d)),
+    'shifts', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'cashier', coalesce(st.name, ''), 'opened_at', s.opened_at, 'closed_at', s.closed_at,
+               'cash_start', s.cash_start, 'expected', pos_shift_expected(s.id), 'counted', s.cash_counted,
+               'received_count', s.received_count,
+               'selisih', s.cash_counted - pos_shift_expected(s.id),
+               'selisih_terima', s.received_count - s.cash_counted,
+               'start_mismatch', s.received_from is null and exists (
+                  select 1 from pos_shifts p where p.id = (
+                    select max(p2.id) from pos_shifts p2 where p2.id < s.id and p2.handover = false)
+                   and s.cash_start <> p.cash_counted)) order by s.opened_at, s.id)
+        from pos_shifts s left join kk_staff st on st.user_id = s.cashier
+       where (s.opened_at at time zone 'Asia/Makassar')::date = d), '[]'::jsonb),
+    'codes', (select jsonb_build_object(
+                'issued', count(*),
+                'claimed', count(*) filter (where r.claimed_by is not null),
+                'expired_unclaimed', count(*) filter (where r.claimed_by is null and r.expires_at < now()))
+                from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
+               where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d),
+    'suspicious', coalesce((
+      select jsonb_agg(jsonb_build_object('no', r.nota,
+               'reason', 'Diklaim kurang dari 60 detik oleh member yang sering mengklaim nota kasir yang sama') order by r.nota)
+        from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
+       where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d
+         and r.claimed_by is not null and r.claimed_at - n.received_at < interval '60 seconds'
+         and (select count(*) from kk_receipts r2
+               where r2.claimed_by = r.claimed_by and r2.created_by = r.created_by
+                 and r2.claimed_at <= r.claimed_at and r2.claimed_at > r.claimed_at - interval '7 days') >= 3), '[]'::jsonb),
+    'storage_mb', (select round(sum((metadata->>'size')::numeric) / 1048576, 2)
+                     from storage.objects where bucket_id = 'bukti')
+  );
+end $$;
+
 -- ---------- Hak akses fungsi ----------
 -- kolam/setup.sql sudah mencabut + memberi hak fungsi kk_*; di sini hanya fungsi pos_*
 -- yang dicabut ulang (supaya hak kk_* tidak ikut terhapus), lalu diberi satu per satu.
@@ -875,5 +972,6 @@ grant execute on function public.pos_device_request(text, text), public.pos_devi
   public.pos_variant_save(jsonb), public.pos_method_save(jsonb), public.pos_discount_save(jsonb),
   public.pos_me(text), public.pos_checkout(jsonb), public.pos_my_notas(),
   public.pos_shift_open(text, int), public.pos_shift_close(int, text, boolean), public.pos_shift_receive(text, int),
-  public.pos_void_request(uuid, text), public.pos_void_pending(), public.pos_void_decide(bigint, boolean)
+  public.pos_void_request(uuid, text), public.pos_void_pending(), public.pos_void_decide(bigint, boolean),
+  public.pos_report(date)
   to authenticated;
