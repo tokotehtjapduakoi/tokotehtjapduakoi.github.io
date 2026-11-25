@@ -41,7 +41,8 @@ test("pemilik menyetujui void", () => lingkungan(async ({ server, browser, sql, 
   await k.context.close();
 
   const { context, page } = await pemilikMasuk(browser, server);
-  // badge Setujui = 1 pengajuan batal + 1 HP pemilik sendiri yang belum disetujui
+  // badge Setujui = 1 pengajuan batal + 1 HP pemilik sendiri yang belum disetujui (dimuat diam-diam sesudah masuk)
+  await page.locator("#tab button", { hasText: "Setujui2" }).waitFor();
   assert.deepEqual(await page.locator("#tab button").allInnerTexts(), ["Jual", "Laporan", "Setujui2", "Atur"]);
   await tab(page, "Laporan").click();
   await page.locator("#lap-omzet", { hasText: "Rp30.000" }).waitFor();
