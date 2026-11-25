@@ -4,7 +4,8 @@ import pytest
 from db import AKAR, Db, SqlError, aal2
 
 INTERNAL = ["pos__audit", "pos__device_status", "pos_device_ok", "pos__nota_out", "pos__nota_lock",
-            "pos__nota_lines_lock", "kk__use_voucher", "kk__draw"]
+            "pos__nota_lines_lock", "pos__photo_ok", "pos__shift_out", "pos_shift_expected",
+            "kk__use_voucher", "kk__draw", "kk__nota_manual_ok"]
 
 
 def jalankan(db, berkas):
@@ -97,3 +98,56 @@ def test_perangkat_panjang_ditolak(db):
     assert db.sql("select count(*) from pos_audit where tbl = 'pos_devices'") == [("1",)]
     assert db.sql(f"select pos_device_request('{'x' * 64}', 'lagi')", sebagai=kasir) == [("pending",)]
     assert db.sql("select count(*) from pos_audit where tbl = 'pos_devices'") == [("1",)]
+
+
+def test_fungsi_internal_dicabut_tepat_setelah_dibuat():
+    """Setiap create fungsi internal langsung diikuti revoke (tidak bergantung pada blok revoke di akhir)."""
+    import re
+    for berkas in ("kolam/setup.sql", "kasir/setup.sql"):
+        teks = (AKAR / berkas).read_text()
+        for f in INTERNAL:
+            m = re.search(rf"create or replace function public\.{f}\(.*?\n(?:end )?\$\$;\n", teks, re.S)
+            if not m:
+                continue
+            sesudah = teks[m.end():].split("\n", 1)[0]
+            assert sesudah.startswith(f"revoke execute on function public.{f}(") and \
+                sesudah.endswith("from public, anon, authenticated;"), (berkas, f, sesudah)
+
+
+def tabel_publik(db, awalan):
+    return [r[0] for r in db.sql(f"select c.oid::regclass::text from pg_class c where c.relnamespace = "
+                                  f"'public'::regnamespace and c.relkind = 'r' and c.relname like '{awalan}\\_%'")]
+
+
+@pytest.mark.parametrize("awalan", ["pos", "kk"])
+def test_service_role_punya_hak_tabel(db, awalan):
+    # hak bawaan dicabut dulu (Supabase baru tidak memberi otomatis); setup harus memberi eksplisit
+    db.sql(f"""do $$ declare t record; begin
+      for t in select c.oid::regclass as rel from pg_class c where c.relnamespace = 'public'::regnamespace
+               and c.relname like '{awalan}\\_%' and c.relkind in ('r', 'S') loop
+        execute format('revoke all on %s from service_role', t.rel);
+      end loop; end $$;""")
+    jalankan(db, "kolam/setup.sql")
+    jalankan(db, "kasir/setup.sql")
+    tabel = tabel_publik(db, awalan)
+    assert len(tabel) >= (10 if awalan == "pos" else 12)
+    for t in tabel:
+        for hak in ("select", "insert", "update", "delete"):
+            assert db.sql(f"select has_table_privilege('service_role', '{t}', '{hak}')") == [("t",)], (t, hak)
+        for peran in ("anon", "authenticated"):
+            for hak in ("insert", "update", "delete"):
+                assert db.sql(f"select has_table_privilege('{peran}', '{t}', '{hak}')") == [("f",)], (t, peran, hak)
+    seq = db.sql(f"select c.oid::regclass::text from pg_class c where c.relnamespace = 'public'::regnamespace "
+                 f"and c.relkind = 'S' and c.relname like '{awalan}\\_%'")
+    assert seq
+    for (q,) in seq:
+        assert db.sql(f"select has_sequence_privilege('service_role', '{q}', 'usage')") == [("t",)], q
+
+
+def test_bucket_bukti_jpeg_200kb(db):
+    assert db.sql("select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'bukti'") \
+        == [("f", "204800", "{image/jpeg}")]
+    db.sql("update storage.buckets set file_size_limit = null, allowed_mime_types = null where id = 'bukti'")
+    jalankan(db, "kasir/setup.sql")
+    assert db.sql("select file_size_limit, allowed_mime_types from storage.buckets where id = 'bukti'") \
+        == [("204800", "{image/jpeg}")]

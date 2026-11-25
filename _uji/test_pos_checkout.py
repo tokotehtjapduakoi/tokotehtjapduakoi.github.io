@@ -228,7 +228,8 @@ def test_nota_terkunci(db, toko):
     assert klien == {"pos_device_request", "pos_devices_list", "pos_device_decide", "pos_catalog", "pos_catalog_all", "pos_item_save",
                      "pos_variant_save", "pos_method_save", "pos_discount_save", "pos_me", "pos_checkout",
                      "pos_my_notas", "pos_shift_open", "pos_shift_close", "pos_shift_receive",
-                     "pos_void_request", "pos_void_pending", "pos_void_decide", "pos_report"}
+                     "pos_void_request", "pos_void_pending", "pos_void_decide", "pos_report",
+                     "pos_held_list", "pos_hold_release"}
 
 
 def voucher(db, kode="TK-ABCDE"):
@@ -355,3 +356,63 @@ def test_nota_pos_tidak_bisa_dihapus_atau_ditiru(db, toko):
     # nota manual biasa masih bisa dihapus
     db.sql("select kk_delete_receipt('ESB-1')", sebagai=toko.pemilik)
     assert toko.checkout(toko.payload(code="ABCDE23457"))["no"] == besok
+
+
+def test_online_jam_hp_harus_dekat_jam_server(db, toko):
+    for selisih in ("10 minutes", "1 day"):
+        lalu = db.sql(f"select now() - interval '{selisih}'")[0][0]
+        toko.ditolak(toko.payload(client_at=lalu), "Jam HP tidak sesuai")
+    nanti = db.sql("select now() + interval '10 minutes'")[0][0]
+    toko.ditolak(toko.payload(client_at=nanti), "Jam HP tidak sesuai")
+    # dalam 5 menit: diterima; offline boleh lebih lama
+    dekat = db.sql("select now() - interval '4 minutes'")[0][0]
+    toko.checkout(toko.payload(client_at=dekat))
+    lalu = db.sql("select now() - interval '1 day'")[0][0]
+    toko.checkout(toko.payload(client_at=lalu, offline=True, code="ABCDE23457"))
+    assert db.sql("select count(*) from pos_notas") == [("2",)]
+
+
+def ditahan(db, toko, **ubah):
+    dulu = db.sql("select now() - interval '10 minutes'")[0][0]
+    db.sql("update pos_devices set revoked_at = now() where id = 'dev1'")
+    r = toko.checkout(toko.payload(offline=True, client_at=dulu, **ubah))
+    db.sql("update pos_devices set revoked_at = null where id = 'dev1'")
+    assert r["code_status"] == "ditahan"
+    return r
+
+
+def test_lepas_tahanan(db, toko):
+    r = ditahan(db, toko, customer_phone="081234567890")
+    r2 = ditahan(db, toko, code="ABCDE23457")
+    db.sql("update kk_receipts set expires_at = now() - interval '1 hour'")  # sudah lewat saat ditahan
+    daftar = json.loads(db.sql("select pos_held_list()", sebagai=toko.pemilik)[0][0])
+    assert [(x["no"], x["total"], x["cashier"], x["device_label"]) for x in daftar] == [
+        (r["no"], 30000, "kasir@x.id", "HP Kasir"), (r2["no"], 30000, "kasir@x.id", "HP Kasir")]
+    assert daftar[0]["lines"] == [{"item": "Teh Tarik", "variant": "14 oz", "qty": 2, "price": 15000, "free": False}]
+    for siapa in (toko.kasir, {**toko.pemilik, "aal": "aal1"}):
+        for q in (f"select pos_hold_release('{r['id']}')", "select pos_held_list()"):
+            with pytest.raises(SqlError, match="Khusus pemilik"):
+                db.sql(q, sebagai=siapa)
+    out = json.loads(db.sql(f"select pos_hold_release('{r['id']}')", sebagai=toko.pemilik)[0][0])
+    assert out["code_status"] == "aktif"
+    assert db.sql(f"select held from pos_notas where id = '{r['id']}'") == [("f",)]
+    assert db.sql(f"select held, expires_at > now() + interval '6 days 23 hours' from kk_receipts "
+                  f"where pos_nota_id = '{r['id']}'") == [("f", "t")]
+    json.loads(db.sql(f"select pos_hold_release('{r2['id']}')", sebagai=toko.pemilik)[0][0])
+    assert db.sql(f"select expires_at between now() + interval '1 hour 59 minutes' and now() + interval '2 hours' "
+                  f"from kk_receipts where pos_nota_id = '{r2['id']}'") == [("t",)]
+    assert db.sql("select pos_held_list()", sebagai=toko.pemilik) == [("[]",)]
+    assert db.sql("select action, new->>'nota' from pos_audit where action = 'lepas_tahan' order by id") == [
+        ("lepas_tahan", r["no"]), ("lepas_tahan", r2["no"])]
+    with pytest.raises(SqlError, match="tidak ditahan"):
+        db.sql(f"select pos_hold_release('{r['id']}')", sebagai=toko.pemilik)
+    m = db.member("6281234567890")
+    assert db.sql("select kk_claim_code('ABCDE-23456')->>'status'", sebagai=m) == [("ok",)]
+
+
+def test_lepas_tahanan_nota_batal_ditolak(db, toko):
+    r = ditahan(db, toko)
+    db.sql(f"update pos_notas set status = 'batal', voided_at = now() where id = '{r['id']}'")
+    with pytest.raises(SqlError, match="sudah batal"):
+        db.sql(f"select pos_hold_release('{r['id']}')", sebagai=toko.pemilik)
+    assert db.sql("select pos_held_list()", sebagai=toko.pemilik) == [("[]",)]

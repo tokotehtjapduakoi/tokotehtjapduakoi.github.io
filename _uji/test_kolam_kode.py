@@ -107,9 +107,10 @@ def test_salah_10x_terkunci(db):
     assert status(db, m) == "blocked"  # kode benar pun ditolak saat terkunci
 
 
-def test_nota_manual_khusus_pemilik_mfa(db):
+def test_nota_manual_khusus_pemilik_mfa_setelah_transisi(db):
     kasir = db.user("k@x.id", peran="kasir")
     pemilik = db.user("p@x.id", peran="pemilik")
+    db.sql("update kk_settings set kasir_nota_manual = false")
     with pytest.raises(SqlError, match="Khusus pemilik"):
         db.sql("select kk_add_receipt('M-1',30000)", sebagai=aal2(kasir))
     with pytest.raises(SqlError, match="Khusus pemilik"):
@@ -122,7 +123,61 @@ def test_nota_manual_khusus_pemilik_mfa(db):
     assert db.sql("select count(*) from kk_receipts where nota='M-1'") == [("1",)]
     with pytest.raises(SqlError, match="Khusus pemilik"):
         db.sql("select kk_delete_receipt('M-1')", sebagai=pemilik)
+    with pytest.raises(SqlError, match="Khusus pemilik"):
+        db.sql("select kk_delete_receipt('M-1')", sebagai=kasir)
     db.sql("select kk_delete_receipt('M-1')", sebagai=aal2(pemilik))
+
+
+def test_nota_manual_kasir_selama_transisi(db):
+    kasir = db.user("k@x.id", peran="kasir")
+    pemilik = db.user("p@x.id", peran="pemilik")
+    m = db.member("6281200000001")
+    assert db.sql("select kasir_nota_manual from kk_settings") == [("t",)]  # bawaan: menyala
+    db.sql("select kk_add_receipt('m-1',30000)", sebagai=kasir)  # kasir aal1 boleh
+    db.sql("select kk_add_receipt('M-3',30000)", sebagai=pemilik)  # pemilik aal1 juga
+    assert db.sql("select kk_add_receipts('[{\"nota\":\"M-2\",\"total\":30000}]'::jsonb)", sebagai=kasir) == [("1",)]
+    assert db.sql("select created_by::text from kk_receipts where nota='M-1'") == [(kasir["sub"],)]
+    db.sql("select kk_delete_receipt('M-2')", sebagai=kasir)
+    assert db.sql("select nota from kk_receipts order by nota") == [("M-1",), ("M-3",)]
+    # perlindungan nota POS tetap berlaku
+    with pytest.raises(SqlError, match="khusus POS"):
+        db.sql("select kk_add_receipt('K261125-001',30000)", sebagai=kasir)
+    db.sql("insert into kk_receipts(nota, total, pos_nota_id) values ('K261125-002', 30000, gen_random_uuid())")
+    with pytest.raises(SqlError, match="sudah diklaim"):
+        db.sql("select kk_delete_receipt('K261125-002')", sebagai=kasir)
+    # nota yang sudah diklaim tidak bisa dihapus
+    assert db.sql("select kk_claim('M-1',30000)->>'status'", sebagai=m) == [("ok",)]
+    with pytest.raises(SqlError, match="sudah diklaim"):
+        db.sql("select kk_delete_receipt('M-1')", sebagai=kasir)
+    # bukan staf tetap ditolak
+    with pytest.raises(SqlError, match="Khusus pemilik"):
+        db.sql("select kk_add_receipt('M-9',30000)", sebagai=m)
+    assert db.sql("select kk_admin_summary()->>'nota_manual'", sebagai=kasir) == [("true",)]
+
+
+def test_sakelar_nota_manual(db):
+    kasir = db.user("k@x.id", peran="kasir")
+    pemilik = db.user("p@x.id", peran="pemilik")
+    for siapa in (kasir, pemilik, aal2(kasir)):
+        with pytest.raises(SqlError, match="Khusus pemilik"):
+            db.sql("select kk_set_kasir_nota_manual(false)", sebagai=siapa)
+    db.sql("select kk_set_kasir_nota_manual(false)", sebagai=aal2(pemilik))
+    assert db.sql("select kasir_nota_manual, legacy_nota_claim from kk_settings") == [("f", "t")]
+    assert db.sql("select kk_admin_summary()->>'nota_manual'", sebagai=kasir) == [("false",)]
+    with pytest.raises(SqlError, match="Khusus pemilik"):
+        db.sql("select kk_add_receipt('M-1',30000)", sebagai=kasir)
+    db.sql("select kk_set_kasir_nota_manual(true)", sebagai=aal2(pemilik))
+    db.sql("select kk_add_receipt('M-1',30000)", sebagai=kasir)
+    # baris pengaturan hilang = mati (gagal tertutup)
+    db.sql("delete from kk_settings")
+    with pytest.raises(SqlError, match="Khusus pemilik"):
+        db.sql("select kk_add_receipt('M-2',30000)", sebagai=kasir)
+    assert db.sql("select kk_admin_summary()->>'nota_manual'", sebagai=kasir) == [("false",)]
+    db.sql("select kk_add_receipt('M-2',30000)", sebagai=aal2(pemilik))
+    # kolom baru tidak bisa diubah langsung oleh klien
+    db.sql("insert into kk_settings(id) values (1)")
+    with pytest.raises(SqlError, match="permission denied"):
+        db.sql("update kk_settings set kasir_nota_manual = true", sebagai=aal2(pemilik))
 
 
 def test_set_staff_perlu_mfa_dan_telepon(db):

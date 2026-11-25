@@ -45,6 +45,9 @@ create schema if not exists storage;
 grant usage on schema storage to anon, authenticated, service_role;
 
 create table if not exists storage.buckets(id text primary key, name text, public boolean);
+-- Kolom batas berkas seperti di Supabase (boleh kosong).
+alter table storage.buckets add column if not exists file_size_limit bigint;
+alter table storage.buckets add column if not exists allowed_mime_types text[];
 
 create table if not exists storage.objects(
   id uuid primary key default gen_random_uuid(),

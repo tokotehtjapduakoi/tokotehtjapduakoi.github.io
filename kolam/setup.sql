@@ -95,6 +95,9 @@ create table if not exists public.kk_settings(
   legacy_nota_claim boolean not null default true
 );
 insert into public.kk_settings(id) values (1) on conflict do nothing;
+-- kasir_nota_manual: masa transisi ESB. Menyala = kasir (tanpa 2 langkah) masih boleh mendaftarkan
+-- dan menghapus nota ESB di Admin -> Nota. Mati = hanya pemilik dengan 2 langkah.
+alter table public.kk_settings add column if not exists kasir_nota_manual boolean not null default true;
 
 create table if not exists public.kk_inventory(
   member_id uuid not null references public.kk_members(user_id) on delete cascade,
@@ -281,6 +284,7 @@ begin
    where user_id = m.user_id;
   return jsonb_build_object('status', 'ok', 'total', r.total, 'pulls', n, 'cards', to_jsonb(cards), 'secret', v_secret);
 end $$;
+revoke execute on function public.kk__draw(uuid, text) from public, anon, authenticated;
 
 create or replace function public.kk_claim(p_nota text, p_total integer) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -439,10 +443,20 @@ begin
 end $$;
 
 -- ---------- Fungsi kasir & pemilik ----------
+-- Boleh mendaftarkan/menghapus nota manual (ESB)? Pemilik + 2 langkah selalu boleh; staf lain
+-- (kasir, atau pemilik tanpa 2 langkah) hanya selama kasir_nota_manual menyala.
+-- Baris pengaturan hilang = mati (gagal tertutup). Internal (tidak di-grant).
+create or replace function public.kk__nota_manual_ok() returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.kk_owner_mfa()
+      or (public.kk_is_staff() and coalesce((select kasir_nota_manual from kk_settings where id = 1), false))
+$$;
+revoke execute on function public.kk__nota_manual_ok() from public, anon, authenticated;
+
 create or replace function public.kk_add_receipt(p_nota text, p_total integer) returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  if not kk__nota_manual_ok() then raise exception 'Khusus pemilik'; end if;
   if coalesce(trim(p_nota), '') = '' then raise exception 'Isi nomor nota'; end if;
   if coalesce(p_total, 0) <= 0 then raise exception 'Isi total belanja'; end if;
   -- format K######-N dipakai nomor nota POS; nota manual tidak boleh memakainya
@@ -457,7 +471,7 @@ create or replace function public.kk_add_receipts(p_rows jsonb) returns integer
 language plpgsql security definer set search_path = public as $$
 declare n integer;
 begin
-  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  if not kk__nota_manual_ok() then raise exception 'Khusus pemilik'; end if;
   with ins as (
     insert into kk_receipts(nota, total, created_by)
     select upper(trim(r->>'nota')), (r->>'total')::int, auth.uid()
@@ -472,7 +486,7 @@ end $$;
 create or replace function public.kk_delete_receipt(p_nota text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  if not kk__nota_manual_ok() then raise exception 'Khusus pemilik'; end if;
   -- nota POS hanya dibatalkan lewat void, bukan dihapus
   delete from kk_receipts where nota = upper(trim(p_nota)) and claimed_by is null and pos_nota_id is null;
   if not found then raise exception 'Nota tidak ada atau sudah diklaim'; end if;
@@ -499,6 +513,7 @@ begin
    where code = upper(trim(p_code)) and kind = 'hadiah' and used_at is null;
   if not found then raise exception 'Voucher tidak ada atau sudah dipakai'; end if;
 end $$;
+revoke execute on function public.kk__use_voucher(text, uuid) from public, anon, authenticated;
 
 create or replace function public.kk_use_voucher(p_code text) returns void
 language plpgsql security definer set search_path = public as $$
@@ -547,6 +562,15 @@ begin
   update kk_settings set legacy_nota_claim = coalesce(p_on, true) where id = 1;
 end $$;
 
+-- Nyalakan/matikan "Nota manual oleh kasir" (masa transisi ESB; khusus pemilik + 2 langkah)
+create or replace function public.kk_set_kasir_nota_manual(p_on boolean) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  if p_on is null then raise exception 'Pilih nyala atau mati'; end if;
+  update kk_settings set kasir_nota_manual = p_on where id = 1;
+end $$;
+
 -- Ringkasan untuk halaman admin
 create or replace function public.kk_admin_summary() returns jsonb
 language plpgsql stable security definer set search_path = public as $$
@@ -560,6 +584,7 @@ begin
     'claimed_today', (select count(*) from kk_receipts where claimed_at >= a),
     'vouchers_open', (select count(*) from kk_exchanges where kind = 'hadiah' and used_at is null),
     'role', (select role from kk_staff where user_id = auth.uid()),
+    'nota_manual', coalesce((select kasir_nota_manual from kk_settings where id = 1), false),
     'mfa', coalesce(auth.jwt()->>'aal', '') = 'aal2'
   );
 end $$;
@@ -578,9 +603,9 @@ grant execute on function public.kk_me(), public.kk_update_profile(text, boolean
   public.kk_delete_receipt(text), public.kk_check_voucher(text), public.kk_use_voucher(text),
   public.kk_reset_pin(text, text), public.kk_set_staff(text, text, text, text), public.kk_admin_summary(),
   public.kk_is_staff(), public.kk_is_owner(), public.kk_owner_mfa(),
-  public.kk_claim_code(text), public.kk_set_legacy_claim(boolean)
+  public.kk_claim_code(text), public.kk_set_legacy_claim(boolean), public.kk_set_kasir_nota_manual(boolean)
   to authenticated;
--- kk__draw dan kk__use_voucher sengaja tidak di-grant (internal).
+-- kk__draw, kk__use_voucher, kk__nota_manual_ok sengaja tidak di-grant (internal).
 grant execute on function public.kk_board(date) to anon, authenticated;
 
 -- ---------- Izin baca tabel ----------
@@ -596,3 +621,20 @@ grant select on public.kk_staff, public.kk_members, public.kk_inventory,
 revoke all on public.kk_receipts from anon, authenticated;
 grant select (nota, total, created_by, created_at, claimed_by, claimed_at, bound_phone, expires_at,
   voided_at, pos_nota_id, held) on public.kk_receipts to authenticated;
+
+-- ---------- Hak tulis tabel: tidak untuk klien; service_role eksplisit ----------
+-- Ditulis eksplisit supaya tidak bergantung pada hak bawaan project. service_role hanya dipakai
+-- di luar website (kunci secret tidak pernah ada di kode).
+do $$ declare t record; begin
+  for t in select c.oid::regclass as rel, c.relkind from pg_class c
+           where c.relnamespace = 'public'::regnamespace and c.relname like 'kk\_%' and c.relkind in ('r', 'S') loop
+    if t.relkind = 'r' then
+      -- klien hanya membaca (grant select di atas); tulis selalu lewat fungsi
+      execute format('revoke insert, update, delete, truncate, references, trigger on table %s from public, anon, authenticated', t.rel);
+      execute format('grant select, insert, update, delete on table %s to service_role', t.rel);
+    else
+      execute format('revoke all on sequence %s from public, anon, authenticated', t.rel);
+      execute format('grant usage, select on sequence %s to service_role', t.rel);
+    end if;
+  end loop;
+end $$;

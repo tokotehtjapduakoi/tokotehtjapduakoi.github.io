@@ -55,7 +55,7 @@ def test_laporan_angka(db, toko):
     assert r["voids"] == [{"no": n15["no"], "total": 15000, "reason": "pelanggan batal beli",
                            "by": "kasir@x.id", "approved_by": "pemilik@x.id"}]
     assert r["pending_voids"] == 0 and r["discounts"] == {"count": 0, "total": 0}
-    assert r["offline"] == {"count": 0, "mismatch": [], "held": 0}
+    assert r["offline"] == {"count": 0, "mismatch": [], "held": 0, "inactive": []}
     assert r["codes"] == {"issued": 2, "claimed": 0, "expired_unclaimed": 0}
     assert r["suspicious"] == [] and r["storage_mb"] is None
     assert laporan(db, toko.pemilik, "2000-01-01")["omzet"] == 0
@@ -127,10 +127,54 @@ def test_laporan_kode_dan_mencurigakan(db, toko):
         assert db.sql(f"select kk_claim_code('AAAAA-2222{i}')->>'status'", sebagai=m) == [("ok",)]
     r = laporan(db, toko.pemilik)
     assert r["codes"] == {"issued": 4, "claimed": 3, "expired_unclaimed": 1}
-    assert [s["no"] for s in r["suspicious"]] == [nota[2]["no"]]  # klaim ketiga, di bawah 60 detik
-    # klaim lambat tidak dicurigai
+    # semua klaim di bawah 60 detik; klaim ketiga juga dari member yang sering mengklaim nota kasir yang sama
+    cepat = "Diklaim kurang dari 60 detik setelah nota"
+    assert [(s["no"], s["reason"]) for s in r["suspicious"]] == [
+        (nota[0]["no"], cepat), (nota[1]["no"], cepat),
+        (nota[2]["no"], cepat + ", dan member ini sering mengklaim nota kasir yang sama")]
+    # klaim lambat: hanya yang ketiga (sering) yang tetap dicurigai
     db.sql("update kk_receipts set claimed_at = claimed_at + interval '5 minutes'")
+    assert laporan(db, toko.pemilik)["suspicious"] == [
+        {"no": nota[2]["no"], "reason": "Member ini sudah mengklaim 3 nota atau lebih dari kasir yang sama dalam 7 hari"}]
+    # nota kasir lain tidak ikut dihitung "sering"
+    lain = db.user("lain@x.id", peran="kasir")
+    db.sql(f"update kk_receipts set created_by = '{lain['sub']}' where nota = '{nota[0]['no']}'")
     assert laporan(db, toko.pemilik)["suspicious"] == []
+
+
+def test_laporan_offline_diskon_metode_nonaktif(db, toko):
+    db.sql("select pos_discount_save('{\"name\":\"Promo\",\"kind\":\"rupiah\",\"value\":5000}')", sebagai=toko.pemilik)
+    did = int(db.sql("select id from pos_discounts")[0][0])
+    ts = db.sql("select now() - least(interval '30 minutes', (now() - (date_trunc('day', now() at time zone 'Asia/Makassar') "
+                "at time zone 'Asia/Makassar')) / 2)")[0][0]
+    toko.checkout(toko.payload(code="AAAAA22222"))  # online, biasa
+    db.sql(f"select pos_discount_save('{{\"id\":{did},\"active\":false}}')", sebagai=toko.pemilik)
+    db.sql(f"select pos_method_save('{{\"id\":{toko.qris},\"active\":false}}')", sebagai=toko.pemilik)
+    a = toko.checkout(toko.payload(code="AAAAA33333", offline=True, client_at=ts, discount_id=did, total=25000,
+                                   cash_received=25000))
+    b = toko.checkout(toko.payload(code="AAAAA44444", offline=True, client_at=ts, method_id=toko.qris,
+                                   cash_received=None))
+    r = laporan(db, toko.pemilik)
+    assert r["offline"]["inactive"] == sorted([
+        {"no": a["no"], "total": 25000, "discount": "Promo", "method": None},
+        {"no": b["no"], "total": 30000, "discount": None, "method": "QRIS"}], key=lambda x: x["no"])
+    # diaktifkan lagi sesudahnya: tanda tetap (dicatat saat nota diterima)
+    db.sql(f"select pos_method_save('{{\"id\":{toko.qris},\"active\":true}}')", sebagai=toko.pemilik)
+    assert len(laporan(db, toko.pemilik)["offline"]["inactive"]) == 2
+
+
+def test_laporan_modal_awal_abaikan_shift_user_terhapus(db, laci):
+    laci.buka(laci.a, 50000)
+    laci.tutup(laci.a, 70000, False)
+    # shift uji (kasir yang sudah tidak terdaftar) ditutup dengan hitungan lain
+    uji = db.user("uji@x.id")
+    db.sql(f"insert into pos_shifts(cashier, device, cash_start, closed_at, cash_counted, handover) "
+           f"values ('{uji['sub']}', 'dev1', 0, now(), 0, false)")
+    laci.buka(laci.b, 70000)
+    # shift B dibandingkan dengan tutup toko A (70.000), bukan shift uji (0)
+    assert laporan(db, laci.pemilik)["shifts"][2]["start_mismatch"] is False
+    db.sql(f"insert into kk_staff(user_id, role) values ('{uji['sub']}', 'kasir')")
+    assert laporan(db, laci.pemilik)["shifts"][2]["start_mismatch"] is True
 
 
 def test_laporan_ukuran_bukti(db, toko):

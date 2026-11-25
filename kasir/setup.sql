@@ -129,6 +129,9 @@ create table if not exists public.pos_notas(
   voided_at timestamptz,
   held boolean not null default false
 );
+-- Nota offline yang memakai diskon/metode bayar yang saat diterima server sudah nonaktif (diperiksa pemilik).
+alter table public.pos_notas add column if not exists discount_inactive boolean not null default false;
+alter table public.pos_notas add column if not exists method_inactive boolean not null default false;
 create index if not exists pos_notas_shift on public.pos_notas(shift_id);
 create index if not exists pos_notas_client_at on public.pos_notas(client_at);
 
@@ -165,22 +168,27 @@ create table if not exists public.pos_counters(
 );
 
 -- ---------- Kunci tabel: RLS aktif, tanpa policy, tanpa hak untuk klien ----------
--- Berlaku untuk SEMUA tabel dan sequence pos_* (termasuk yang ditambah nanti).
+-- Berlaku untuk SEMUA tabel dan sequence pos_* (termasuk yang ditambah nanti). service_role diberi hak eksplisit.
 do $$ declare t record; begin
   for t in select c.oid::regclass as rel, c.relkind from pg_class c
            where c.relnamespace = 'public'::regnamespace and c.relname like 'pos\_%' and c.relkind in ('r', 'S') loop
     if t.relkind = 'r' then
       execute format('alter table %s enable row level security', t.rel);
       execute format('revoke all on table %s from public, anon, authenticated', t.rel);
+      -- service_role (skrip uji asap & perbaikan oleh pemilik; kunci secret tidak pernah ada di website)
+      execute format('grant select, insert, update, delete on table %s to service_role', t.rel);
     else
       execute format('revoke all on sequence %s from public, anon, authenticated', t.rel);
+      execute format('grant usage, select on sequence %s to service_role', t.rel);
     end if;
   end loop;
 end $$;
 
 -- ---------- Bukti (foto) ----------
-insert into storage.buckets(id, name, public) values ('bukti', 'bukti', false)
-on conflict (id) do update set public = false;
+-- Foto bukti: JPEG saja, paling besar 200 KB (HP mengecilkan ke ±40 KB).
+insert into storage.buckets(id, name, public, file_size_limit, allowed_mime_types)
+values ('bukti', 'bukti', false, 204800, '{image/jpeg}')
+on conflict (id) do update set public = false, file_size_limit = 204800, allowed_mime_types = '{image/jpeg}';
 
 drop policy if exists pos_bukti_unggah on storage.objects;
 create policy pos_bukti_unggah on storage.objects for insert to authenticated
@@ -191,11 +199,13 @@ create policy pos_bukti_baca on storage.objects for select to authenticated
 -- Sengaja tidak ada policy update/delete.
 
 -- ---------- Internal ----------
+-- Tiap fungsi internal langsung dicabut haknya setelah dibuat (tidak di-grant ke klien).
 create or replace function public.pos__audit(p_tbl text, p_row text, p_action text, p_old jsonb, p_new jsonb)
 returns void language sql security definer set search_path = public as $$
   insert into pos_audit(tbl, row_id, action, old, new, by_user)
   values (p_tbl, p_row, p_action, p_old, p_new, auth.uid())
 $$;
+revoke execute on function public.pos__audit(text, text, text, jsonb, jsonb) from public, anon, authenticated;
 
 create or replace function public.pos__device_status(p_device text) returns text
 language sql stable security definer set search_path = public as $$
@@ -204,11 +214,13 @@ language sql stable security definer set search_path = public as $$
                                else 'pending' end
                      from pos_devices where id = p_device), 'unknown')
 $$;
+revoke execute on function public.pos__device_status(text) from public, anon, authenticated;
 
 create or replace function public.pos_device_ok(p_device text) returns boolean
 language sql stable security definer set search_path = public as $$
   select public.pos__device_status(p_device) = 'approved'
 $$;
+revoke execute on function public.pos_device_ok(text) from public, anon, authenticated;
 
 -- Aturan foto bukti: path di folder kasir yang login dan sudah terunggah di bucket 'bukti'.
 create or replace function public.pos__photo_ok(p_path text) returns boolean
@@ -216,6 +228,7 @@ language sql stable security definer set search_path = public as $$
   select coalesce(starts_with(p_path, auth.uid()::text || '/'), false)
      and exists (select 1 from storage.objects o where o.bucket_id = 'bukti' and o.name = p_path)
 $$;
+revoke execute on function public.pos__photo_ok(text) from public, anon, authenticated;
 
 -- ---------- Perangkat ----------
 create or replace function public.pos_device_request(p_device text, p_label text) returns text
@@ -424,12 +437,14 @@ language sql stable security definer set search_path = public as $$
      where n.shift_id = s.id and n.status = 'lunas' and m.kind = 'tunai'), 0)::int
     from pos_shifts s where s.id = p_shift
 $$;
+revoke execute on function public.pos_shift_expected(bigint) from public, anon, authenticated;
 
 create or replace function public.pos__shift_out(p_id bigint) returns jsonb
 language sql stable security definer set search_path = public as $$
   select jsonb_build_object('id', id, 'opened_at', opened_at, 'cash_start', cash_start)
     from pos_shifts where id = p_id
 $$;
+revoke execute on function public.pos__shift_out(bigint) from public, anon, authenticated;
 
 -- Buka shift pertama (modal awal diketik). Ditolak bila laci masih dipegang shift lain.
 create or replace function public.pos_shift_open(p_device text, p_cash_start int) returns jsonb
@@ -512,6 +527,7 @@ begin
   end if;
   return new;
 end $$;
+revoke execute on function public.pos__nota_lock() from public, anon, authenticated;
 drop trigger if exists pos_nota_lock on public.pos_notas;
 create trigger pos_nota_lock before update or delete on public.pos_notas
   for each row execute function public.pos__nota_lock();
@@ -521,6 +537,7 @@ language plpgsql set search_path = public as $$
 begin
   raise exception 'Nota terkunci: baris item tidak bisa diubah';
 end $$;
+revoke execute on function public.pos__nota_lines_lock() from public, anon, authenticated;
 drop trigger if exists pos_nota_lines_lock on public.pos_nota_lines;
 create trigger pos_nota_lines_lock before update or delete on public.pos_nota_lines
   for each row execute function public.pos__nota_lines_lock();
@@ -538,6 +555,7 @@ language sql stable security definer set search_path = public as $$
   from pos_notas n left join kk_receipts r on r.pos_nota_id = n.id
   where n.id = p_id
 $$;
+revoke execute on function public.pos__nota_out(uuid) from public, anon, authenticated;
 
 -- ---------- Checkout ----------
 -- p: {id, device, client_at, offline, lines:[{variant_id, qty}], discount_id, voucher_code,
@@ -599,6 +617,10 @@ begin
 
   if v_client_at is null then raise exception 'Waktu nota kosong'; end if;
   if v_client_at > v_now + interval '5 minutes' then raise exception 'Jam HP tidak sesuai, periksa jam HP'; end if;
+  -- Nota online dibuat saat ini juga: jam HP harus dalam 5 menit dari jam server.
+  if not v_offline and v_client_at < v_now - interval '5 minutes' then
+    raise exception 'Jam HP tidak sesuai, periksa jam HP';
+  end if;
   if v_client_at < v_now - interval '3 days' then
     raise exception 'Nota lebih dari 3 hari, laporkan ke pemilik';
   end if;
@@ -724,10 +746,10 @@ begin
 
   insert into pos_notas(id, no, cashier, device, shift_id, client_at, received_at, offline, subtotal, discount_id,
     discount_amt, total, server_total, price_mismatch, method_id, cash_received, change, photo_path,
-    customer_phone, voucher_code, held)
+    customer_phone, voucher_code, held, discount_inactive, method_inactive)
   values (v_id, v_no, v_uid, v_device, v_shift, v_client_at, v_now, v_offline, v_sub, v_disc.id,
     v_disc_amt, v_total, v_server, v_total <> v_server, v_method.id, v_cash, v_change, v_photo,
-    v_phone, v_voucher, v_held);
+    v_phone, v_voucher, v_held, coalesce(not v_disc.active, false), not v_method.active);
 
   insert into pos_nota_lines(nota_id, variant_id, item_name, variant_name, qty, price, free)
   select v_id, (x->>'variant_id')::bigint, x->>'item_name', x->>'variant_name', (x->>'qty')::int,
@@ -886,6 +908,51 @@ begin
   return jsonb_build_object('approved', true, 'cards_missing', to_jsonb(missing));
 end $$;
 
+-- ---------- Nota ditahan (HP dicabut saat offline) ----------
+-- Nota lunas yang ditahan, terlama dulu (layar Setujui pemilik).
+create or replace function public.pos_held_list() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'id', n.id, 'no', n.no, 'total', n.total, 'method', m.name, 'client_at', n.client_at,
+      'received_at', n.received_at, 'cashier', coalesce(st.name, ''), 'device', n.device,
+      'device_label', coalesce(d.label, ''), 'photo_path', n.photo_path,
+      'lines', coalesce((select jsonb_agg(jsonb_build_object('item', l.item_name, 'variant', l.variant_name,
+                                                              'qty', l.qty, 'price', l.price, 'free', l.free) order by l.id)
+                           from pos_nota_lines l where l.nota_id = n.id), '[]'::jsonb))
+      order by n.received_at, n.no)
+    from pos_notas n
+    join pos_pay_methods m on m.id = n.method_id
+    left join kk_staff st on st.user_id = n.cashier
+    left join pos_devices d on d.id = n.device
+    where n.held and n.status = 'lunas'), '[]'::jsonb);
+end $$;
+
+-- Lepas tahanan: kode klaim aktif, masa berlaku dihitung ulang dari sekarang.
+create or replace function public.pos_hold_release(p_nota uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare n pos_notas; r kk_receipts;
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  select * into n from pos_notas where id = p_nota for update;
+  if not found then raise exception 'Nota tidak ada'; end if;
+  if n.status <> 'lunas' then raise exception 'Nota sudah batal'; end if;
+  if not n.held then raise exception 'Nota tidak ditahan'; end if;
+  update pos_notas set held = false where id = n.id;
+  select * into r from kk_receipts where pos_nota_id = n.id for update;
+  if found then
+    update kk_receipts set held = false,
+           expires_at = now() + case when bound_phone is not null then interval '7 days' else interval '2 hours' end
+     where nota = r.nota;
+  end if;
+  perform pos__audit('pos_notas', n.id::text, 'lepas_tahan', jsonb_build_object('held', true, 'expires_at', r.expires_at),
+    jsonb_build_object('held', false, 'nota', n.no,
+                       'expires_at', (select expires_at from kk_receipts where pos_nota_id = n.id)));
+  return pos__nota_out(n.id);
+end $$;
+
 -- ---------- Laporan harian (pemilik) ----------
 -- Hari = tanggal WITA dari client_at nota (nota offline dihitung di hari ia dijual); shift di hari ia dibuka.
 create or replace function public.pos_report(p_day date default null) returns jsonb
@@ -945,7 +1012,14 @@ begin
                               from pos_notas where status = 'lunas' and price_mismatch
                                and client_at >= v_from and client_at < v_to), '[]'::jsonb),
       'held', (select count(*) from pos_notas where status = 'lunas' and held
-                  and client_at >= v_from and client_at < v_to)),
+                  and client_at >= v_from and client_at < v_to),
+      'inactive', coalesce((select jsonb_agg(jsonb_build_object('no', n.no, 'total', n.total,
+                             'discount', case when n.discount_inactive then d.name end,
+                             'method', case when n.method_inactive then m.name end) order by n.no)
+                              from pos_notas n join pos_pay_methods m on m.id = n.method_id
+                              left join pos_discounts d on d.id = n.discount_id
+                             where n.status = 'lunas' and (n.discount_inactive or n.method_inactive)
+                               and n.client_at >= v_from and n.client_at < v_to), '[]'::jsonb)),
     'shifts', coalesce((
       select jsonb_agg(jsonb_build_object(
                'cashier', coalesce(st.name, ''), 'opened_at', s.opened_at, 'closed_at', s.closed_at,
@@ -955,7 +1029,9 @@ begin
                'selisih_terima', s.received_count - s.cash_counted,
                'start_mismatch', s.received_from is null and exists (
                   select 1 from pos_shifts p where p.id = (
-                    select max(p2.id) from pos_shifts p2 where p2.id < s.id and p2.handover = false)
+                    -- tutup toko sebelumnya oleh staf yang masih terdaftar (shift user uji yang sudah dihapus diabaikan)
+                    select max(p2.id) from pos_shifts p2 where p2.id < s.id and p2.handover = false
+                       and exists (select 1 from kk_staff k where k.user_id = p2.cashier))
                    and s.cash_start <> p.cash_counted)) order by s.opened_at, s.id)
         from pos_shifts s left join kk_staff st on st.user_id = s.cashier
        where s.opened_at >= v_from and s.opened_at < v_to), '[]'::jsonb),
@@ -965,15 +1041,23 @@ begin
                 'expired_unclaimed', count(*) filter (where r.claimed_by is null and r.expires_at < now()))
                 from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
                where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to),
+    -- Klaim dicurigai: kurang dari 60 detik setelah nota, ATAU member yang dalam 7 hari sudah
+    -- mengklaim >= 3 nota dari kasir yang sama.
     'suspicious', coalesce((
-      select jsonb_agg(jsonb_build_object('no', r.nota,
-               'reason', 'Diklaim kurang dari 60 detik oleh member yang sering mengklaim nota kasir yang sama') order by r.nota)
-        from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
-       where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
-         and r.claimed_by is not null and r.claimed_at - n.received_at < interval '60 seconds'
-         and (select count(*) from kk_receipts r2
-               where r2.claimed_by = r.claimed_by and r2.created_by = r.created_by
-                 and r2.claimed_at <= r.claimed_at and r2.claimed_at > r.claimed_at - interval '7 days') >= 3), '[]'::jsonb),
+      select jsonb_agg(jsonb_build_object('no', x.nota, 'reason',
+               case when x.cepat and x.sering
+                      then 'Diklaim kurang dari 60 detik setelah nota, dan member ini sering mengklaim nota kasir yang sama'
+                    when x.cepat then 'Diklaim kurang dari 60 detik setelah nota'
+                    else 'Member ini sudah mengklaim 3 nota atau lebih dari kasir yang sama dalam 7 hari' end)
+             order by x.nota)
+        from (select r.nota, r.claimed_at - n.received_at < interval '60 seconds' as cepat,
+                     (select count(*) from kk_receipts r2
+                       where r2.claimed_by = r.claimed_by and r2.created_by = r.created_by
+                         and r2.claimed_at <= r.claimed_at and r2.claimed_at > r.claimed_at - interval '7 days') >= 3 as sering
+                from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
+               where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
+                 and r.claimed_by is not null) x
+       where x.cepat or x.sering), '[]'::jsonb),
     'storage_mb', (select round(sum((metadata->>'size')::numeric) / 1048576, 2)
                      from storage.objects where bucket_id = 'bukti')
   );
@@ -988,13 +1072,13 @@ do $$ declare f record; begin
     execute format('revoke execute on function %s from public, anon, authenticated', f.sig);
   end loop;
 end $$;
--- Internal, sengaja tidak di-grant: pos__audit, pos__device_status, pos_device_ok, pos__photo_ok, pos__nota_out,
--- pos__nota_lock, pos__nota_lines_lock, pos__shift_out, pos_shift_expected.
+-- Internal, sengaja tidak di-grant (juga dicabut tepat setelah dibuat): pos__audit, pos__device_status, pos_device_ok,
+-- pos__photo_ok, pos__nota_out, pos__nota_lock, pos__nota_lines_lock, pos__shift_out, pos_shift_expected.
 grant execute on function public.pos_device_request(text, text), public.pos_devices_list(),
   public.pos_device_decide(text, boolean), public.pos_catalog(), public.pos_catalog_all(), public.pos_item_save(jsonb),
   public.pos_variant_save(jsonb), public.pos_method_save(jsonb), public.pos_discount_save(jsonb),
   public.pos_me(text), public.pos_checkout(jsonb), public.pos_my_notas(),
   public.pos_shift_open(text, int), public.pos_shift_close(int, text, boolean), public.pos_shift_receive(text, int),
   public.pos_void_request(uuid, text), public.pos_void_pending(), public.pos_void_decide(bigint, boolean),
-  public.pos_report(date)
+  public.pos_report(date), public.pos_held_list(), public.pos_hold_release(uuid)
   to authenticated;
