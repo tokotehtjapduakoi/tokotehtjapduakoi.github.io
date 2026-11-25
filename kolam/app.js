@@ -90,7 +90,7 @@ async function loadMe(){const me=await rpc("kk_me");if(!me){S=null;return false}
   S={_phone:me.phone,name:me.nickname,show:me.show_on_board,inv:me.inv||{},ever:me.ever||[],pity:{sr:me.pity_sr,ur:me.pity_ur},bank:me.bank,trx:me.trx,spent:Number(me.spent),
      exchanged:me.exchanged,exMonth:me.ex_month,skinsBought:me.skins||[],vouchers:me.vouchers||[],
      ref:{code:me.ref_code||"",month:me.ref_month||0,total:me.ref_total||0,pending:me.ref_pending||0,max:me.ref_max||15,min:me.ref_min||20000,by:me.referred_by||"",done:!!me.ref_done,canUse:!!me.can_use_ref},
-     bonus:me.bonus_pulls||0,postToday:me.post_today||0,
+     bonus:me.bonus_pulls||0,postToday:me.post_today||0,postMin:me.post_min||20000,
      skin:L.skin||"klasik",customBg:L.customBg,avatar:L.avatar,avatarPos:L.avatarPos,wait:L.wait||[],_seen:S&&S._seen};
   if(!SKINS.some(k=>k.id===S.skin&&unlocked(k)))S.skin="klasik";
   return true}
@@ -138,7 +138,7 @@ function vAjak(){const R=S.ref;if(!R.code)return "";/* database belum diperbarui
   <button type="button" class="btn ghost" style="flex:1;min-width:120px" id="rsh">${navigator.share?"Bagikan":"Salin ajakan"}</button></div>
   <div class="small" style="display:grid;gap:4px"><div>Berhasil bulan ini: <b>${R.month}/${R.max}</b>${penuh?` · <span style="color:var(--marun)">batas bulan ini tercapai, temanmu tetap dapat es teh</span>`:""}</div><div class="bar"><i style="width:${Math.min(100,R.month/R.max*100)}%"></i></div>
   ${R.pending?`<div class="muted">${R.pending} teman sudah daftar, menunggu belanja pertama.</div>`:""}${R.total?`<div class="muted">Total teman berhasil: ${R.total}</div>`:""}</div></section>
-  <section class="card"><h2>Bonus posting</h2><p class="small">Posting foto atau story minuman kami dan tag <b>@tokoteh.tjapduakoi</b>. Tunjukkan ke kasir, lalu pilih: <b>es teh gratis</b> atau <b>1 tarikan kartu koi</b>. Berlaku 1 kali sehari.</p>${S.postToday?`<p class="small" style="color:var(--koi)">Bonus posting hari ini sudah diambil. Sampai besok!</p>`:""}</section>`}
+  <section class="card"><h2>Bonus posting</h2><p class="small">Posting foto atau story minuman kami dan tag <b>@tokoteh.tjapduakoi</b>. Di hari kamu belanja minimal <b>${rp(S.postMin)}</b> (nota sudah dimasukkan di sini), tunjukkan postingannya ke kasir, lalu pilih: <b>es teh gratis</b> atau <b>1 tarikan kartu koi</b>. 1 kali sehari.</p>${S.postToday?`<p class="small" style="color:var(--koi)">Bonus posting hari ini sudah diambil. Sampai besok!</p>`:""}</section>`}
 function vTarik(){const tiers=RULE.pulls.slice().reverse();
   return header()+vBonus()+`<section class="card"><h2>Masukkan nota</h2><p class="small muted">Ketik nomor nota dan total belanja persis seperti di struk. Jumlah tarikan otomatis sesuai total belanja.</p>
   <label for="nota">Nomor nota<input id="nota" class="txt" autocomplete="off" autocapitalize="characters" placeholder="mis. POS-1123-0303"></label>
@@ -247,7 +247,7 @@ function vAkun(){return header()+`<section class="card"><h2>Akunku</h2>
   <section class="card"><h2>Lupa PIN?</h2><p class="small muted">PIN bisa direset oleh pemilik toko. Hubungi kami lewat WhatsApp dari nomor HP yang terdaftar.</p>
   <a class="btn ghost" style="display:grid;place-items:center;text-decoration:none" target="_blank" rel="noopener" href="${waLink("Halo Toko Teh Tjap Dua Koi! Aku mau reset PIN Kolam Koi untuk nomor 0"+S._phone.slice(2))}">Chat WhatsApp toko</a></section>
   <section class="card"><h2>Aturan singkat</h2><ul class="small" style="margin:0;padding-left:18px;display:grid;gap:4px">
-  <li>Satu nota hanya bisa dipakai satu kali oleh satu akun.</li><li>Jumlah tarikan mengikuti total belanja di nota.</li><li>Kode hadiah ditunjukkan ke kasir dan berlaku sekali.</li><li>Kartu, poin, dan hadiah tidak bisa diuangkan.</li><li>Kode ajak hanya untuk member baru, dipakai sebelum belanja pertama. Satu nomor HP satu akun.</li><li>Es teh ajak teman berlaku setelah teman belanja minimal ${rp(S.ref.min)}. Pengajak maksimal ${S.ref.max} es teh per bulan.</li><li>Bonus posting: 1 kali sehari, ditunjukkan ke kasir.</li><li>Toko berhak membatalkan kartu dari nota yang tidak sah.</li></ul></section>
+  <li>Satu nota hanya bisa dipakai satu kali oleh satu akun.</li><li>Jumlah tarikan mengikuti total belanja di nota.</li><li>Kode hadiah ditunjukkan ke kasir dan berlaku sekali.</li><li>Kartu, poin, dan hadiah tidak bisa diuangkan.</li><li>Kode ajak hanya untuk member baru, dipakai sebelum belanja pertama. Satu nomor HP satu akun.</li><li>Es teh ajak teman berlaku setelah teman belanja minimal ${rp(S.ref.min)}. Pengajak maksimal ${S.ref.max} es teh per bulan.</li><li>Bonus posting: hanya di hari kamu belanja minimal ${rp(S.postMin)}, 1 kali sehari, ditunjukkan ke kasir.</li><li>Toko berhak membatalkan kartu dari nota yang tidak sah.</li></ul></section>
   <button type="button" class="btn ghost" id="out">Keluar</button>`}
 function bindAkun(){$("sv").onclick=async()=>{const n=$("nn").value.trim();if(!n)return toast("Nama panggilan tidak boleh kosong.");
     try{await rpc("kk_update_profile",{p_nickname:n,p_show:$("show").checked});await loadMe();board=null;toast("Tersimpan.");render()}catch(e){toast(errMsg(e))}};

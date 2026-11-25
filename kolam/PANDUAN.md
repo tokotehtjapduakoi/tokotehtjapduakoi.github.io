@@ -68,11 +68,11 @@ Aman dijalankan ulang: data member, kartu, dan voucher yang sudah ada tidak hila
 - Voucher muncul di **Hadiahku**. Kasir memakainya seperti voucher biasa di **Admin → Voucher**.
 
 **Bonus posting:**
-1. Pelanggan menunjukkan post/story yang men-tag **@tokoteh.tjapduakoi**.
+1. Syarat: pelanggan **sudah belanja minimal Rp20.000 hari itu** dan notanya sudah dimasukkan di Kolam Koi. Lalu ia menunjukkan post/story yang men-tag **@tokoteh.tjapduakoi**.
 2. Kasir membuka **Admin → Posting**, ketik nomor HP pelanggan, lalu ketuk pilihan pelanggan:
    - **Es teh gratis**: muncul kode voucher. Berikan es tehnya, lalu tandai kode itu dipakai di tab Voucher.
    - **+1 tarikan kartu**: pelanggan menarik kartunya sendiri di tab Tarik (tombol "Tarik kartu bonus").
 3. Berlaku **1 kali sehari** per member.
 
 **Mengubah angka program:** Supabase → **Table Editor** → `kk_program`:
-`ajak_min_belanja` (20000), `ajak_maks_per_bulan` (15), `posting_per_hari` (1).
+`ajak_min_belanja` (20000), `ajak_maks_per_bulan` (15), `posting_per_hari` (1), `posting_min_belanja` (20000).

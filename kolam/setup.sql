@@ -121,7 +121,8 @@ create table if not exists public.kk_program(key text primary key, value integer
 insert into public.kk_program values
  ('ajak_min_belanja',20000,'Belanja minimal (Rp) teman baru supaya kode ajak berlaku'),
  ('ajak_maks_per_bulan',15,'Maksimal teman per bulan yang memberi es teh gratis ke pengajak'),
- ('posting_per_hari',1,'Berapa kali bonus posting boleh diklaim satu member per hari')
+ ('posting_per_hari',1,'Berapa kali bonus posting boleh diklaim satu member per hari'),
+ ('posting_min_belanja',20000,'Bonus posting hanya jika member sudah memasukkan nota hari ini dengan total minimal ini (Rp)')
 on conflict (key) do nothing;
 
 alter table public.kk_members add column if not exists ref_code text unique;
@@ -314,7 +315,8 @@ begin
     'ref_done', m.ref_done_at is not null,
     'can_use_ref', m.referred_by is null and m.trx = 0,
     'bonus_pulls', m.bonus_pulls,
-    'post_today', (select count(*) from kk_posts p where p.member_id = m.user_id and p.day = (now() at time zone 'Asia/Makassar')::date)
+    'post_today', (select count(*) from kk_posts p where p.member_id = m.user_id and p.day = (now() at time zone 'Asia/Makassar')::date),
+    'post_min', kk_prog('posting_min_belanja', 20000)
   );
 end $$;
 
@@ -555,9 +557,26 @@ end $$;
 
 -- Bonus posting: kasir sudah melihat post/story yang men-tag @tokoteh.tjapduakoi.
 -- p_choice: 'esteh' (voucher es teh gratis) atau 'tarik' (+1 tarikan kartu).
+-- Status bonus posting satu member hari ini (untuk layar kasir)
+create or replace function public.kk_posting_status(p_phone text) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare m kk_members; v_day date := (now() at time zone 'Asia/Makassar')::date;
+  v_mulai timestamptz := date_trunc('day', now() at time zone 'Asia/Makassar') at time zone 'Asia/Makassar';
+begin
+  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  select * into m from kk_members where phone = p_phone;
+  if not found then return null; end if;
+  return jsonb_build_object('nickname', m.nickname, 'phone', m.phone,
+    'today', (select count(*) from kk_posts where member_id = m.user_id and day = v_day) >= kk_prog('posting_per_hari', 1),
+    'belanja', coalesce((select max(total) from kk_receipts r where r.claimed_by = m.user_id and r.claimed_at >= v_mulai), 0),
+    'min', kk_prog('posting_min_belanja', 20000));
+end $$;
+
 create or replace function public.kk_posting_bonus(p_phone text, p_choice text, p_link text default '') returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare m kk_members; v_code text; v_day date := (now() at time zone 'Asia/Makassar')::date; v_n integer;
+  v_mulai timestamptz := date_trunc('day', now() at time zone 'Asia/Makassar') at time zone 'Asia/Makassar';
+  v_min integer := kk_prog('posting_min_belanja', 20000);
 begin
   if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
   if p_choice not in ('esteh','tarik') then raise exception 'Pilih es teh atau tarikan'; end if;
@@ -565,6 +584,10 @@ begin
   if not found then raise exception 'Nomor itu belum terdaftar sebagai member'; end if;
   select count(*) into v_n from kk_posts where member_id = m.user_id and day = v_day;
   if v_n >= kk_prog('posting_per_hari', 1) then raise exception '% sudah klaim bonus posting hari ini', m.nickname; end if;
+  -- Syarat: belanja hari ini (nota sudah dimasukkan di Kolam Koi oleh member ini)
+  if not exists (select 1 from kk_receipts r where r.claimed_by = m.user_id and r.claimed_at >= v_mulai and r.total >= v_min) then
+    raise exception '% belum punya nota belanja hari ini minimal Rp%. Minta pelanggan memasukkan notanya di Kolam Koi dulu', m.nickname, replace(to_char(v_min, 'FM999,999,999'), ',', '.');
+  end if;
   insert into kk_posts(member_id, day, choice, link, staff_id) values (m.user_id, v_day, p_choice, left(coalesce(trim(p_link), ''), 300), auth.uid());
   if p_choice = 'esteh' then
     v_code := kk_give_bonus(m.user_id, 'Es teh gratis · bonus posting');
@@ -626,7 +649,7 @@ grant execute on function public.kk_me(), public.kk_update_profile(text, boolean
   public.kk_delete_receipt(text), public.kk_check_voucher(text), public.kk_use_voucher(text),
   public.kk_reset_pin(text, text), public.kk_set_staff(text, text, text), public.kk_admin_summary(),
   public.kk_is_staff(), public.kk_is_owner(),
-  public.kk_use_ref(text), public.kk_pull_bonus(), public.kk_posting_bonus(text, text, text)
+  public.kk_use_ref(text), public.kk_pull_bonus(), public.kk_posting_bonus(text, text, text), public.kk_posting_status(text)
   to authenticated;
 grant execute on function public.kk_board(date), public.kk_ref_check(text) to anon, authenticated;
 
