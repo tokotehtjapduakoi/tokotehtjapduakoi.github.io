@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -140,6 +141,11 @@ test("harga berubah: menu dimuat ulang, total dihitung ulang", async () => {
   await sql.query("update pos_variants set price = 16000 where name = '14 oz' and item_id = (select id from pos_items where name = 'Teh Tarik')");
   await page.getByRole("button", { name: "Lunas" }).click();
   await page.getByText(/Harga menu berubah/).waitFor();
+  // foto sudah terunggah: terkunci supaya percobaan ulang tidak menyimpan foto lain
+  const kunci = page.getByRole("button", { name: "Foto terkunci" });
+  assert.equal(await kunci.isDisabled(), true);
+  await page.getByText(/tidak bisa diganti/).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Ganti foto bukti" }).count(), 0);
   await page.locator("#ringkas").getByText("Rp16.000").waitFor();
   await page.getByRole("button", { name: "Lunas" }).click();
   await page.locator(".selesai").getByText("Rp16.000").waitFor();
@@ -165,5 +171,77 @@ test("kode bentrok diulang otomatis dengan kode baru", async () => {
   assert.equal(kode.length, 2);
   assert.notEqual(kode[0], kode[1]);
   assert.equal((await page.locator("#kode-klaim").innerText()).replace("-", ""), kode[1]);
+  await context.close();
+});
+
+async function bayarQris(page) {
+  await page.getByRole("button", { name: "Bayar", exact: true }).click();
+  await page.getByRole("button", { name: "QRIS" }).click();
+  await ambilFoto(page);
+}
+const sha = (kode) => createHash("sha256").update(kode.replace("-", "")).digest("hex");
+
+test("jawaban hilang setelah tersimpan: Lunas lagi memakai kode yang sama (hash cocok)", async () => {
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await siap(page, buka);
+  await isiKeranjang(page);
+  await bayarQris(page);
+  const sebelum = (await sql.query("select count(*)::int as n from pos_notas")).rows[0].n;
+  await fetch(server.url + "/__uji/putus-setelah-rpc", { method: "POST", body: JSON.stringify({ fn: "pos_checkout", kali: 1 }) });
+  await page.getByRole("button", { name: "Lunas" }).click();
+  await page.getByText("Koneksi internet bermasalah").waitFor();
+  assert.equal((await sql.query("select count(*)::int as n from pos_notas")).rows[0].n, sebelum + 1, "nota sudah tersimpan");
+  await page.getByRole("button", { name: "Lunas" }).click();
+  await page.locator(".qr svg").waitFor();
+  assert.equal((await sql.query("select count(*)::int as n from pos_notas")).rows[0].n, sebelum + 1, "tidak ada nota ganda");
+  const kode = await page.locator("#kode-klaim").innerText();
+  const r = await sql.query("select code_hash from kk_receipts where pos_nota_id = (select id from pos_notas order by received_at desc limit 1)");
+  assert.equal(r.rows[0].code_hash, sha(kode));
+  await context.close();
+});
+
+test("diskon persen yang tidak habis dibagi: total di layar = total server", async () => {
+  await sql.query("update pos_variants set price = 17555 where item_id = (select id from pos_items where name = 'Milo Tarik')");
+  const d = await rpcSebagai(server, "pemilik@uji.id", "pos_discount_save", { p: { name: "Teman 15", kind: "persen", value: 15 } });
+  assert.ok(d);
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await siap(page, buka);
+  await page.getByRole("button", { name: "Milo Tarik" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /14 oz/ }).click();
+  await page.getByRole("button", { name: "Bayar", exact: true }).click();
+  await page.getByRole("button", { name: "QRIS" }).click();
+  await page.getByLabel("Diskon (opsional)").selectOption({ label: "Teman 15 (15%)" });
+  await page.locator("#ringkas .total").getByText("Rp14.922").waitFor(); // 17555 - floor(2633,25)
+  await ambilFoto(page);
+  await page.getByRole("button", { name: "Lunas" }).click();
+  await page.locator(".selesai .total").getByText("Rp14.922").waitFor();
+  const r = await sql.query("select total, discount_amt, server_total, price_mismatch from pos_notas order by received_at desc limit 1");
+  assert.deepEqual(r.rows[0], { total: 14922, discount_amt: 2633, server_total: 14922, price_mismatch: false });
+  await context.close();
+});
+
+test("voucher TK- pada baris qty 2: 1 porsi gratis, teks WA, voucher terpakai", async () => {
+  const m = await sql.query(`insert into auth.users(email, raw_user_meta_data) values ('6281200000099@member.tjapduakoi.id', '{"phone":"6281200000099"}') returning id`);
+  await sql.query("insert into kk_members(user_id, phone, nickname) values ($1, '6281200000099', 'Uji') on conflict do nothing", [m.rows[0].id]);
+  await sql.query("insert into kk_exchanges(member_id, kind, item, points, code) values ($1, 'hadiah', '1 minuman gratis', 30, 'TK-UJI01')", [m.rows[0].id]);
+  await sql.query("update pos_variants set price = 16000 where name = '14 oz' and item_id = (select id from pos_items where name = 'Teh Tarik')");
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await siap(page, buka);
+  await isiKeranjang(page, 2);
+  await page.getByRole("button", { name: "Bayar", exact: true }).click();
+  await page.getByRole("button", { name: "QRIS" }).click();
+  await page.getByLabel("Voucher TK- (opsional)").fill("tk-uji01");
+  await page.locator("#ringkas .total").getByText("Rp16.000").waitFor();
+  await page.getByLabel("Nomor HP pelanggan (opsional)").fill("081200000003");
+  await ambilFoto(page);
+  await page.getByRole("button", { name: "Lunas" }).click();
+  const wa = page.getByRole("link", { name: "Kirim WA" });
+  await wa.waitFor();
+  const teks = decodeURIComponent((await wa.getAttribute("href")).split("?text=")[1]);
+  assert.ok(teks.includes("1× Teh Tarik 14 oz  Rp16.000\n1× Teh Tarik 14 oz (voucher)  Rp0\nTotal Rp16.000 (QRIS)"), teks);
+  const v = await sql.query("select used_at is not null as dipakai from kk_exchanges where code = 'TK-UJI01'");
+  assert.equal(v.rows[0].dipakai, true);
+  const n = await sql.query("select total, voucher_code from pos_notas order by received_at desc limit 1");
+  assert.deepEqual(n.rows[0], { total: 16000, voucher_code: "TK-UJI01" });
   await context.close();
 });

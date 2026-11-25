@@ -15,12 +15,25 @@ test("buat: 10 karakter alfabet, tidak ada duplikat", () => {
   assert.equal(semua.size, 10000);
 });
 
-test("buat: sebaran rata (tiap huruf muncul)", () => {
-  const hitung = {};
-  for (let i = 0; i < 20000; i++) for (const c of K.buat()) hitung[c] = (hitung[c] || 0) + 1;
-  assert.equal(Object.keys(hitung).length, 31);
-  const rata = 200000 / 31;
-  for (const n of Object.values(hitung)) assert.ok(Math.abs(n - rata) < rata * 0.1, "sebaran miring");
+test("buat: byte >= 248 dibuang (rejection sampling), tidak dipetakan", () => {
+  const desk = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const asli = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+  const antrean = [[248, 255, 250, 249, 251, 252, 253, 254, 248, 255, 250, 249, 251, 252, 253, 254], // semua dibuang
+    [0, 30, 31, 61, 62, 247, 247, 1, 2, 3, 4, 5, 6, 7, 8, 9]]; // 247 % 31 = 30 -> '9'
+  let panggilan = 0;
+  Object.defineProperty(globalThis, "crypto", { configurable: true, value: { getRandomValues: (b) => {
+    panggilan++;
+    const isi = antrean.shift() || Array.from(asli(new Uint8Array(16)));
+    b.set(isi); return b;
+  } } });
+  try {
+    const k = K.buat();
+    assert.equal(panggilan, 2, "blok pertama (semua >= 248) harus dibuang seluruhnya");
+    // 0->A 30->9 31->A 61->9 62->A 247->9 247->9 1->B 2->C 3->D
+    assert.equal(k, "A9A9A99BCD");
+  } finally {
+    Object.defineProperty(globalThis, "crypto", desk);
+  }
 });
 
 test("normal dan tampil", () => {

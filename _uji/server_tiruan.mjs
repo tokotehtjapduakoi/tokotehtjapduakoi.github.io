@@ -116,6 +116,7 @@ async function auth(req, res, url) {
 
 // ---------- RPC ----------
 const NAMA = /^[a-z_][a-z0-9_]*$/;
+const putusRpc = new Map(); // fn -> sisa panggilan yang jawabannya dibuang (POST /__uji/putus-setelah-rpc {fn, kali})
 async function rpc(req, res, fn) {
   if (!NAMA.test(fn)) return kirim(res, 404, { message: "fungsi tidak ada" });
   const args = json(await bacaBody(req));
@@ -130,6 +131,13 @@ async function rpc(req, res, fn) {
       if (f?.kosong) { await c.query(`select ${panggil}`, nilai); return null; }
       return (await c.query(`select to_jsonb(${panggil}) as v`, nilai)).rows[0].v;
     });
+    if (putusRpc.get(fn) > 0) { // uji: perubahan sudah tersimpan tetapi jawaban tidak sampai ke HP
+      putusRpc.set(fn, putusRpc.get(fn) - 1);
+      // Jawaban dipotong di tengah (bukan sekadar sambungan ditutup, supaya browser tidak mengulang sendiri).
+      res.writeHead(200, { "content-type": "application/json", "content-length": 100000, "access-control-allow-origin": "*" });
+      res.write("{");
+      return setTimeout(() => res.socket.destroy(), 50);
+    }
     return kirim(res, 200, isi);
   } catch (e) {
     return galatPg(res, e);
@@ -225,6 +233,11 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/__uji/berkas" && req.method === "GET") { // isi berkas storage, untuk pemeriksaan uji
       const f = berkas.get(url.searchParams.get("path"));
       return f ? kirim(res, 200, f.bytes, f.tipe) : kirim(res, 404, { message: "tidak ada" });
+    }
+    if (url.pathname === "/__uji/putus-setelah-rpc" && req.method === "POST") {
+      const { fn, kali = 1 } = json(await bacaBody(req));
+      putusRpc.set(fn, kali);
+      return kirim(res, 200, { fn, kali });
     }
     const api = /^\/(auth|rest|storage)\/v1\//.test(url.pathname);
     if (api && offline) return req.socket.destroy();

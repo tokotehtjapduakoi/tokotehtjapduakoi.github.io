@@ -5,7 +5,7 @@ const CFG=window.KASIR_CONFIG||{};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,3200)}
-const putus=e=>/Failed to fetch|NetworkError|Load failed/i.test((e&&e.message)||String(e));
+const putus=e=>/Failed to fetch|NetworkError|Load failed|network error/i.test((e&&e.message)||String(e));
 const errMsg=e=>putus(e)?"Koneksi internet bermasalah.":((e&&e.message)||String(e));
 const DIAM_MAKS=30*60*1000; // logout otomatis setelah 30 menit tanpa sentuhan/ketikan
 
@@ -54,7 +54,7 @@ function bindTunggu(){$("cek").onclick=async()=>{if(sibuk)return;sibuk=true;$("c
 /* ---------- Jual: menu -> keranjang -> bayar -> foto -> lunas -> QR/WA ---------- */
 const rp=n=>KasirKode.rp(n);
 const J0=()=>({tahap:"menu",cart:[],sheet:null,notaId:null,metode:null,uang:"",disc:"",voucher:"",hp:"",
-  foto:null,fotoUrl:null,pesan:"",sibuk:false,selesai:null});
+  foto:null,fotoUrl:null,fotoKunci:false,kode:null,pesan:"",sibuk:false,selesai:null});
 let J=J0();
 const digit=s=>String(s||"").replace(/\D/g,"");
 // 08xx / 8xx / +62xx -> 62xx. Kosong -> "". Tidak sah -> null.
@@ -100,7 +100,8 @@ function vBayar(){const c=cat(),h=hitung();
   <label for="vc">Voucher TK- (opsional)<input id="vc" autocomplete="off" autocapitalize="characters" placeholder="TK-..." value="${esc(J.voucher)}"></label>
   <label for="hp">Nomor HP pelanggan (opsional)<input id="hp" type="tel" inputmode="tel" autocomplete="off" placeholder="0812..." value="${esc(J.hp)}"></label>
   <p class="err" id="hperr" role="alert"></p>
-  <div class="fotobox"><button type="button" class="btn ghost" id="foto">${J.foto?"Ganti foto bukti":"Ambil foto bukti"}</button>
+  <div class="fotobox"><button type="button" class="btn ghost" id="foto"${J.fotoKunci?" disabled":""}>${J.fotoKunci?"Foto terkunci":J.foto?"Ganti foto bukti":"Ambil foto bukti"}</button>
+  ${J.fotoKunci?`<span class="small muted">Foto sudah terunggah sebagai bukti nota ini, tidak bisa diganti.</span>`:""}
   ${J.fotoUrl?`<img class="prat" src="${esc(J.fotoUrl)}" alt="Pratinjau foto bukti">`:`<span class="small muted">Foto bukti wajib sebelum Lunas.</span>`}</div>
   <p class="err" id="pesan" role="alert">${esc(J.pesan)}</p>
   <button type="button" class="btn lunas" id="lunas">Lunas</button></section>`}
@@ -136,12 +137,16 @@ function tambah(v,it){const l=J.cart.find(x=>String(x.vid)===String(v.id));
 // Harga/menu berubah di server: muat ulang katalog, hitung ulang harga keranjang, buang baris yang sudah tidak ada.
 async function muatUlangMenu(){S.catalog=await rpc("pos_catalog");
   const peta={};for(const i of S.catalog.items)for(const v of i.variants||[])peta[v.id]={i,v};
+  if(J.disc&&!S.catalog.discounts.some(d=>String(d.id)===String(J.disc)))J.disc="";
+  if(J.metode&&!S.catalog.methods.some(m=>String(m.id)===String(J.metode)))J.metode=S.catalog.methods.length?S.catalog.methods[0].id:null;
   J.cart=J.cart.filter(l=>peta[l.vid]).map(l=>{const {i,v}=peta[l.vid];return {...l,item:i.name,variant:v.name,price:v.price}})}
 
 // Langkah kirim nota: unggah foto, lalu pos_checkout. Satu fungsi supaya antrean offline (Task 10) bisa membungkusnya.
-async function kirimNota(p,foto){
+// saatUnggah dipanggil begitu foto tersimpan di server (sejak itu foto jadi bukti dan tidak boleh diganti).
+async function kirimNota(p,foto,saatUnggah){
   const {error}=await S.sb.storage.from("bukti").upload(p.photo_path,foto,{contentType:"image/jpeg",upsert:false});
   if(error&&String(error.statusCode||error.status)!=="409"&&!/already exists|duplicate/i.test(error.message||""))throw error;
+  if(saatUnggah)saatUnggah();
   try{return {hasil:await rpc("pos_checkout",{p}),kode:p.code}}
   catch(e){if(!/Kode bentrok/i.test((e&&e.message)||""))throw e;
     p.code=KasirKode.buat();return {hasil:await rpc("pos_checkout",{p}),kode:p.code}}}
@@ -150,14 +155,15 @@ function bangunPayload(){const h=hitung(),m=metodeAktif();
   return {id:J.notaId,device:S.device,client_at:new Date().toISOString(),offline:false,
     lines:J.cart.map(l=>({variant_id:l.vid,qty:l.qty})),discount_id:J.disc?Number(J.disc):null,
     voucher_code:J.voucher.trim()||null,method_id:m.id,total:h.total,cash_received:h.tunai?h.uang:null,
-    photo_path:`${S.user.id}/${J.notaId}.jpg`,customer_phone:hp62(J.hp)||null,code:KasirKode.buat()}}
+    photo_path:`${S.user.id}/${J.notaId}.jpg`,customer_phone:hp62(J.hp)||null,code:J.kode}}
 // Baris untuk teks WA: seperti nota di server (voucher = 1 porsi baris pertama gratis).
 function barisWa(){const l=J.cart.map(x=>({qty:x.qty,item:x.item,variant:x.variant,price:x.price}));
   if(J.voucher.trim()&&l.length){const f=l[0];if(f.qty>1){l[0]={...f,qty:f.qty-1};l.push({...f,qty:1,variant:f.variant+" (voucher)",price:0})}else l[0]={...f,variant:f.variant+" (voucher)",price:0}}
   return l}
 async function lunas(){if(!bisaLunas())return;J.sibuk=true;J.pesan="";segarBayar();$("lunas").textContent="Menyimpan...";
-  try{const p=bangunPayload(),h=hitung(),m=metodeAktif(),baris=barisWa(),hp=hp62(J.hp)||"";
-    const {hasil,kode}=await kirimNota(p,J.foto);
+  let p=null;
+  try{p=bangunPayload();const h=hitung(),m=metodeAktif(),baris=barisWa(),hp=hp62(J.hp)||"";
+    const {hasil,kode}=await kirimNota(p,J.foto,()=>{J.fotoKunci=true});
     const teks=KasirKode.teksWa({no:hasil.no,lines:baris,total:hasil.total,method:m.name,kode});
     J.selesai={hasil,kode,tunai:h.tunai,hp,teks};J.tahap="selesai";
     if(J.fotoUrl)URL.revokeObjectURL(J.fotoUrl);J.fotoUrl=null;J.foto=null}
@@ -165,7 +171,7 @@ async function lunas(){if(!bisaLunas())return;J.sibuk=true;J.pesan="";segarBayar
     if(/Harga berubah|muat ulang menu/i.test(msg)){try{await muatUlangMenu();J.pesan="Harga menu berubah. Menu sudah dimuat ulang dan total dihitung ulang. Periksa lagi, lalu tekan Lunas.";
       if(!J.cart.length)J.tahap="menu"}catch(e2){J.pesan=errMsg(e2)}}
     else J.pesan=msg}
-  finally{J.sibuk=false}render()}
+  finally{J.sibuk=false;if(p)J.kode=p.code}render()}
 
 function bindJual(){
   const cs=$("cek-shift");if(cs)cs.onclick=async()=>{cs.disabled=true;try{await muatMe()}catch(e){toast(errMsg(e))}render()};
@@ -179,7 +185,7 @@ function bindJual(){
   document.querySelectorAll("[data-min]").forEach(b=>b.onclick=()=>{const l=J.cart[b.dataset.min];if(l&&l.qty>1)l.qty--;render()});
   document.querySelectorAll("[data-plus]").forEach(b=>b.onclick=()=>{const l=J.cart[b.dataset.plus];if(l)l.qty=Math.min(l.qty+1,999);render()});
   document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{J.cart.splice(Number(b.dataset.del),1);render()});
-  $("bayar").onclick=()=>{if(!J.cart.length)return;if(!J.notaId)J.notaId=crypto.randomUUID();
+  $("bayar").onclick=()=>{if(!J.cart.length)return;if(!J.notaId){J.notaId=crypto.randomUUID();J.kode=KasirKode.buat()}
     if(!J.metode&&cat().methods.length)J.metode=cat().methods[0].id;J.pesan="";J.tahap="bayar";render()}}
 function bindBayar(){
   $("balik").onclick=()=>{J.tahap="menu";render()};
