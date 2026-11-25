@@ -42,6 +42,19 @@ window.KOI_CONFIG = {
     grabfood: ""
   },
 
+  /* ---------- Musik ----------
+     tampil : true = tombol musik muncul di pojok kanan bawah, false = disembunyikan.
+     file   : kosongkan ("") untuk memakai musik orisinal bawaan "Teh Tarik Sore"
+              (dimainkan langsung oleh browser, tanpa file, jadi ringan).
+              Kalau punya lagu sendiri yang BOLEH dipakai (bukan lagu orang lain tanpa izin),
+              unggah file MP3-nya ke repo lalu tulis namanya, misalnya "musik.mp3".
+     judul  : nama lagu yang muncul saat tombol ditekan lama / diarahkan kursor. */
+  musik: {
+    tampil: true,
+    file: "",
+    judul: "Teh Tarik Sore"
+  },
+
   /* ---------- Cabang ----------
      Untuk menambah cabang: salin satu blok { ... } beserta komanya,
      tempel di bawahnya, lalu ganti isinya.

@@ -340,7 +340,19 @@
   </div>
 </footer>
 
+<!-- ================= Pemutar musik (pengaturan di config.js) ================= -->
+<div class="musik" id="musik" hidden>
+  <button type="button" class="musik__tombol" aria-pressed="false" aria-label="Putar musik">
+    <span class="musik__ikon" aria-hidden="true">
+      <svg class="ikon-main" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
+      <span class="musik__eq"><i></i><i></i><i></i></span>
+    </span>
+    <span class="musik__teks">Putar musik</span>
+  </button>
+</div>
+
 <script src="config.js"></script>
 <script src="app.js"></script>
+<script src="musik.js" defer></script>
 </body>
 </html>
