@@ -56,7 +56,7 @@ HASIL = []  # (nama, lulus, catatan)
 TABEL_SERVICE = ["pos_devices", "pos_items", "pos_variants", "pos_price_history", "pos_pay_methods", "pos_discounts",
                  "pos_audit", "pos_shifts", "pos_notas", "pos_nota_lines", "pos_void_requests", "pos_counters",
                  "kk_staff", "kk_members", "kk_receipts", "kk_pulls", "kk_settings"]
-RAND = secrets.token_hex(3)
+RAND = secrets.token_hex(3).upper()  # huruf besar: kk_add_receipt menyimpan nomor nota upper()
 
 
 def cek(nama, ok, catatan=""):
@@ -303,15 +303,16 @@ def main():
             ("kasir: pos__audit", "pos__audit", {"p_tbl": "x", "p_row": "x", "p_action": "x", "p_old": None, "p_new": None}, tk),
             ("kasir: pos__nota_out", "pos__nota_out", {"p_id": nota_id}, tk),
             ("member: kk_add_receipt", "kk_add_receipt", {"p_nota": f"UJI-M-{RAND}", "p_total": 30000}, tm)]:
+            if fn == "kk_add_receipt":
+                dibuat["receipts"].append(args["p_nota"])
             r = rpc(fn, args, tok)
             cek(f"Tidak bisa dipanggil klien ({nama})", ditolak(r), f"{r[0]} {pesan(r)}")
         # kk_add_receipt untuk kasir: boleh selama "Nota manual oleh kasir" menyala (masa transisi ESB)
+        dibuat["receipts"].append(f"UJI-{RAND}")  # dicatat sebelum dipanggil: dihapus apa pun hasilnya
         c, d = svc("GET", "kk_settings?select=kasir_nota_manual&id=eq.1")
         manual = c == 200 and bool(d) and d[0].get("kasir_nota_manual") is True
         nota_manual = f"UJI-{RAND}"
         r = rpc("kk_add_receipt", {"p_nota": nota_manual, "p_total": 30000}, tk)
-        if r[0] < 400:
-            dibuat["receipts"].append(nota_manual)
         cek(f"kk_add_receipt kasir {'diizinkan (masa transisi)' if manual else 'ditolak (transisi selesai)'}",
             (r[0] < 400) == manual, f"{r[0]} {pesan(r)}")
 
@@ -375,8 +376,14 @@ def bersihkan(users, dibuat):
                    {"closed_at": sekarang, "handover": False, "cash_counted": (d[0]["cash_start"] or 0) + tunai},
                    prefer="return=minimal")
         print(("  ok    " if c in (200, 204) else "  GAGAL ") + f"shift uji {sid} ditutup" + ("" if c in (200, 204) else f" [{c} {str(d)[:100]}]"))
+    # Nota manual uji (UJI-<RAND>...): hapus, lalu baca ulang. Sisa = nota 30.000 yang bisa diklaim di DB asli.
     if dibuat["receipts"]:
         hapus("kk_receipts manual uji", f"kk_receipts?nota={ins(dibuat['receipts'])}")
+    hapus("kk_receipts UJI-" + RAND + "*", f"kk_receipts?nota=like.UJI-{RAND}*")
+    c, d = svc("GET", f"kk_receipts?select=nota&nota=like.UJI-{RAND}*")
+    if not cek("Nota manual uji UJI-" + RAND + "... sudah terhapus", c == 200 and d == [],
+               f"{c} {d} -> MASIH ADA nota uji yang bisa diklaim! Jalankan SQL pembersih di bawah"):
+        sisa.append("receipts")
     if users.get("member"):
         m = users["member"]
         for t in ["kk_pulls", "kk_collection", "kk_inventory", "kk_exchanges"]:
@@ -432,19 +439,26 @@ def ringkas(sisa, users, dibuat):
         s = ",".join(str(x) for x in dibuat["shift"] if x)
         v = ",".join(str(x) for x in dibuat["variants"])
         i = ",".join(str(x) for x in dibuat["items"])
-        print("\nSisa terkunci trigger. Nota uji sudah dibatalkan dan shift uji sudah ditutup, jadi laporan dan laci aman.\n"
+        print("\nAda sisa data uji. Nota uji sudah dibatalkan dan shift uji sudah ditutup, jadi laporan dan laci aman.\n"
               "Tetap jalankan SQL ini di Supabase SQL Editor HARI INI JUGA (sebelum toko buka besok), supaya shift uji\n"
               "tidak dianggap 'tutup toko sebelumnya' dan nomor nota uji hilang dari daftar:\n")
-        print("begin;\nalter table public.pos_notas disable trigger pos_nota_lock;\n"
-              "alter table public.pos_nota_lines disable trigger pos_nota_lines_lock;")
-        print(f"delete from public.pos_nota_lines where nota_id in ({n});")
-        print(f"delete from public.pos_notas where id in ({n});")
-        if s:
-            print(f"delete from public.pos_shifts where id in ({s});")
-        print(f"delete from public.pos_price_history where variant_id in ({v});")
-        print(f"delete from public.pos_variants where id in ({v});\ndelete from public.pos_items where id in ({i});")
-        print("alter table public.pos_notas enable trigger pos_nota_lock;\n"
-              "alter table public.pos_nota_lines enable trigger pos_nota_lines_lock;\ncommit;\n")
+        print("begin;")
+        print(f"delete from public.kk_receipts where nota like 'UJI-{RAND}%' and claimed_by is null;")
+        if n and ("notas" in sisa or "lines" in sisa):
+            print("alter table public.pos_notas disable trigger pos_nota_lock;\n"
+                  "alter table public.pos_nota_lines disable trigger pos_nota_lines_lock;")
+            print(f"delete from public.pos_nota_lines where nota_id in ({n});")
+            print(f"delete from public.pos_notas where id in ({n});")
+            if s:
+                print(f"delete from public.pos_shifts where id in ({s});")
+            if v:
+                print(f"delete from public.pos_price_history where variant_id in ({v});")
+                print(f"delete from public.pos_variants where id in ({v});")
+            if i:
+                print(f"delete from public.pos_items where id in ({i});")
+            print("alter table public.pos_notas enable trigger pos_nota_lock;\n"
+                  "alter table public.pos_nota_lines enable trigger pos_nota_lines_lock;")
+        print("commit;\n")
     lulus = sum(1 for _, ok, _ in HASIL if ok)
     gagal = [(n, c) for n, ok, c in HASIL if not ok]
     print(f"\n=== {'PASS' if not gagal else 'FAIL'}: {lulus}/{len(HASIL)} pemeriksaan lulus"

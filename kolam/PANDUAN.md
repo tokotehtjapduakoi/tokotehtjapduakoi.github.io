@@ -36,7 +36,7 @@ Menu **Authentication**:
    insert into kk_staff(user_id, role, name)
    select id, 'pemilik', 'Pemilik' from auth.users where email = 'emailkamu@gmail.com';
    ```
-3. Muat ulang halaman admin. Menu Voucher dan Member langsung terbuka.
+3. Muat ulang halaman admin. Menu Voucher dan Member langsung terbuka. Menu **Nota** juga terbuka untuk semua staf selama sakelar **Nota manual oleh kasir** menyala (masa transisi ESB, menyala dari awal).
 4. Menu **Staf**, sakelar di **Nota**, dan reset PIN butuh **verifikasi 2 langkah**. Ikuti kotak **Verifikasi 2 langkah** di atas halaman (pasang Google Authenticator, pindai QR, ketik 6 angka). Caranya lengkap ada di `kasir/PANDUAN.md` langkah 2.
 
 Untuk kasir: minta mereka daftar di halaman admin dengan email masing-masing, lalu tambahkan email itu di menu **Staf** (isi juga baris untuk dirimu sendiri dengan nomor HP-mu).
