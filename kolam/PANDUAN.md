@@ -52,3 +52,27 @@ Untuk kasir: minta mereka daftar di halaman admin dengan email masing-masing, la
 - Satu nota hanya bisa dipakai sekali. Pelanggan harus mengetik nomor **dan** total yang benar. Setelah 10 kali salah dalam sehari, akun dikunci sampai besok.
 
 Hadiah, poin, dan jumlah tarikan bisa diubah di Supabase **Table Editor** (`kk_rewards`, `kk_tiers`, `kk_skins`). Website membaca angka barunya otomatis.
+
+## Teman Tarik: ajak teman pakai kode (mulai 25 Nov 2026)
+
+**Cara memasang (sekali saja):** buka `https://tokotehtjapduakoi.github.io/kolam/admin/sql.html` di HP,
+ketuk **Salin semua SQL**, lalu di Supabase **SQL Editor** hapus isi lama, tempel, dan **Run**.
+Aman dijalankan ulang: data member, kartu, dan voucher yang sudah ada tidak hilang. Member lama otomatis dapat kode ajak.
+
+**Aturannya:**
+- Setiap member punya kode ajak, misalnya `RINAK-MXA`, di tab **Tarik**. Ada tombol kirim lewat WhatsApp dengan link daftar yang kodenya sudah terisi.
+- Kode hanya bisa dipakai **member baru**: saat daftar, atau di tab Tarik sebelum belanja pertama. Satu nomor HP hanya bisa memakai satu kode, sekali.
+- Saat teman itu memasukkan nota pertama dengan total **minimal Rp20.000**, sistem otomatis memberi:
+  - teman: voucher **"Es teh gratis · hadiah teman baru"**
+  - pengajak: voucher **"Es teh gratis · ajak <nama teman>"**, maksimal **15 per bulan**. Setelah batas itu, temannya tetap dapat, pengajaknya tidak.
+- Voucher muncul di **Hadiahku**. Kasir memakainya seperti voucher biasa di **Admin → Voucher**.
+
+**Bonus posting:**
+1. Pelanggan menunjukkan post/story yang men-tag **@tokoteh.tjapduakoi**.
+2. Kasir membuka **Admin → Posting**, ketik nomor HP pelanggan, lalu ketuk pilihan pelanggan:
+   - **Es teh gratis**: muncul kode voucher. Berikan es tehnya, lalu tandai kode itu dipakai di tab Voucher.
+   - **+1 tarikan kartu**: pelanggan menarik kartunya sendiri di tab Tarik (tombol "Tarik kartu bonus").
+3. Berlaku **1 kali sehari** per member.
+
+**Mengubah angka program:** Supabase → **Table Editor** → `kk_program`:
+`ajak_min_belanja` (20000), `ajak_maks_per_bulan` (15), `posting_per_hari` (1).

@@ -16,6 +16,10 @@ h1{color:var(--marun)}
 nav.tabs{grid-template-columns:repeat(var(--n,4),1fr)}
 .list .row{padding:8px 0;border-bottom:1px solid var(--line)}
 .mono{font-family:var(--f-mono)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:4px 0}
+.stat{background:var(--card,#fff);border:2px solid var(--ink,#1F2A25);border-radius:12px;padding:8px 10px;display:grid;gap:2px}
+.stat b{font:700 22px/1 var(--f-head,Oswald,sans-serif)}
+.stat span{font-size:12px;color:var(--muted,#5b6560)}
 select{font:600 15px var(--f-body);padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
 </style>
 </head>
@@ -25,6 +29,6 @@ select{font:600 15px var(--f-body);padding:10px;border:1px solid var(--line);bor
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <script src="../config.js?v=2"></script>
 <script src="../vendor/supabase-2.45.4.js"></script>
-<script src="admin.js"></script>
+<script src="admin.js?v=3"></script>
 </body>
 </html>

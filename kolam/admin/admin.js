@@ -17,12 +17,12 @@ async function q(p){const {data,error}=await p;if(error)throw error;return data}
 const owner=()=>sum&&sum.role==="pemilik";
 
 function nav(){const n=$("tabs");if(!sum){n.hidden=true;return}n.hidden=false;
-  const T=[["nota","Nota"],["voucher","Voucher"],["member","Member"],...(owner()?[["staf","Staf"]]:[])];n.style.setProperty("--n",T.length);
+  const T=[["nota","Nota"],["voucher","Voucher"],["posting","Posting"],["member","Member"],...(owner()?[["staf","Staf"]]:[])];n.style.setProperty("--n",T.length);
   n.innerHTML=T.map(([k,l])=>`<button type="button" data-k="${k}" ${k===tab?'aria-current="page"':""}>${l}</button>`).join("");
   n.querySelectorAll("button").forEach(b=>b.onclick=()=>{tab=b.dataset.k;render()})}
 function head(){return `<div class="head"><h1>Admin Kolam Koi</h1><button type="button" class="btn sm ghost" id="out">Keluar</button></div>
   <p class="small muted">${esc(user.email)} · ${sum.role}</p>
-  <div class="stats"><div class="stat"><b>${sum.receipts_today}</b><span>nota hari ini</span></div><div class="stat"><b>${sum.claimed_today}</b><span>diklaim hari ini</span></div><div class="stat"><b>${sum.members}</b><span>member (+${sum.members_today})</span></div></div>`}
+  <div class="stats"><div class="stat"><b>${sum.receipts_today}</b><span>nota hari ini</span></div><div class="stat"><b>${sum.claimed_today}</b><span>diklaim hari ini</span></div><div class="stat"><b>${sum.members}</b><span>member (+${sum.members_today})</span></div></div>${sum.ajak_today!=null?`<p class="small muted">Hari ini: ${sum.ajak_today} teman baru dari kode ajak · ${sum.posts_today} bonus posting</p>`:""}`}
 
 /* ---------- Nota ---------- */
 let recent=null;
@@ -50,7 +50,7 @@ function bindNota(){const rn=$("rn"),rt=$("rt"),ri=$("ri");rn.focus();
 
 /* ---------- Voucher ---------- */
 let vc=null,openV=null;
-async function vVoucher(){openV=openV||await q(sb.from("kk_exchanges").select("code,item,created_at,kk_members(nickname,phone)").eq("kind","hadiah").is("used_at",null).order("created_at",{ascending:false}).limit(50));
+async function vVoucher(){openV=openV||await q(sb.from("kk_exchanges").select("code,item,created_at,kk_members(nickname,phone)").in("kind",["hadiah","bonus"]).is("used_at",null).order("created_at",{ascending:false}).limit(50));
   return head()+`<section class="card"><h2>Cek kode hadiah</h2><form id="vf" style="display:grid;gap:12px"><label for="vcode">Kode dari HP pelanggan<input id="vcode" class="txt" autocomplete="off" autocapitalize="characters" placeholder="TK-XXXXX" value="${esc(vc&&vc.code||"")}"></label><button type="submit" class="btn">Cek</button></form>
   ${vc===false?`<p class="err small">Kode tidak ditemukan. Periksa lagi hurufnya.</p>`:vc?`<div class="voucher"><b>${esc(vc.item)}</b><code>${esc(vc.code)}</code><span class="small muted">${esc(vc.nickname)} · ${hp(vc.phone)}</span><span class="small muted">${jam(vc.created_at)}</span></div>
    ${vc.used_at?`<p class="pill bad" style="justify-self:start">Sudah dipakai ${jam(vc.used_at)}</p>`:`<button type="button" class="btn gold" id="use">Berikan hadiah & tandai dipakai</button>`}`:""}</section>
@@ -58,11 +58,25 @@ async function vVoucher(){openV=openV||await q(sb.from("kk_exchanges").select("c
 function bindVoucher(){$("vf").onsubmit=async e=>{e.preventDefault();const c=$("vcode").value.trim().toUpperCase();if(!c)return;try{vc=(await rpc("kk_check_voucher",{p_code:c}))||false}catch(err){toast(errMsg(err))}render()};
   const u=$("use");if(u)u.onclick=async()=>{if(busy)return;busy=true;u.disabled=true;try{await rpc("kk_use_voucher",{p_code:vc.code});toast("Hadiah diberikan. Voucher ditandai dipakai.");vc=await rpc("kk_check_voucher",{p_code:vc.code});openV=null;await refresh()}catch(err){toast(errMsg(err))}finally{busy=false;render()}}}
 
+/* ---------- Bonus posting ---------- */
+let pm=null,pres=null;
+function vPosting(){return head()+`<section class="card"><h2>Bonus posting</h2><p class="small muted">Pelanggan menunjukkan post/story yang men-tag <b>@tokoteh.tjapduakoi</b>. Cek dulu postingannya benar ada dan menandai akun kita, lalu cari nomornya. Berlaku 1 kali sehari per member.</p>
+  <form id="pf2" style="display:grid;gap:12px"><label for="pp">Nomor HP member<input id="pp" class="txt" inputmode="tel" placeholder="0812..." value="${esc(pm&&hp(pm.phone)||"")}"></label><button type="submit" class="btn">Cari</button></form>
+  ${pm===false?`<p class="err small">Nomor itu belum terdaftar. Minta pelanggan daftar Kolam Koi dulu.</p>`:pm?`<div class="list"><div class="row"><span class="muted small">Nama</span><b>${esc(pm.nickname)}</b></div><div class="row"><span class="muted small">Bonus posting hari ini</span><b>${pm.today?`<span class="pill bad">sudah diambil</span>`:`<span class="pill ok">belum</span>`}</b></div></div>
+   ${pm.today?"":`<label for="pl">Link postingan (opsional)<input id="pl" class="txt" style="text-transform:none" autocomplete="off" placeholder="https://instagram.com/..."></label>
+   <p class="small" style="font-weight:600">Pelanggan memilih:</p><div class="row" style="gap:8px"><button type="button" class="btn gold" style="flex:1" data-pc="esteh">Es teh gratis</button><button type="button" class="btn" style="flex:1" data-pc="tarik">+1 tarikan kartu</button></div>`}`:""}
+  ${pres?`<div class="voucher"><b>${esc(pres.nickname)}: ${pres.choice==="esteh"?"es teh gratis":"+1 tarikan kartu"}</b>${pres.code?`<code>${esc(pres.code)}</code><span class="small muted">Langsung berikan es tehnya, lalu tandai kode ini dipakai di tab Voucher.</span>`:`<span class="small muted">Tarikan bonus muncul di HP pelanggan (tab Tarik).</span>`}</div>`:""}</section>`}
+function bindPosting(){$("pf2").onsubmit=async e=>{e.preventDefault();pres=null;const p=normPhone($("pp").value);if(!p)return toast("Nomor HP belum benar.");
+    try{const r=await q(sb.from("kk_members").select("user_id,nickname,phone").eq("phone",p).maybeSingle());
+      if(!r)pm=false;else{const d=new Date(Date.now()+8*36e5).toISOString().slice(0,10);const t=await q(sb.from("kk_posts").select("id").eq("member_id",r.user_id).eq("day",d));pm={...r,today:t.length>0}}}catch(err){toast(errMsg(err))}render()};
+  document.querySelectorAll("[data-pc]").forEach(b=>b.onclick=async()=>{if(busy)return;busy=true;b.disabled=true;
+    try{pres=await rpc("kk_posting_bonus",{p_phone:pm.phone,p_choice:b.dataset.pc,p_link:($("pl")&&$("pl").value)||""});pm={...pm,today:true};openV=null;toast("Bonus posting dicatat.");await refresh()}catch(err){toast(errMsg(err))}finally{busy=false;render()}})}
+
 /* ---------- Member ---------- */
 let mem=null;
 function normPhone(v){let d=String(v||"").replace(/\D/g,"");if(d.startsWith("0"))d="62"+d.slice(1);else if(d.startsWith("8"))d="62"+d;return /^62\d{8,13}$/.test(d)?d:null}
 function vMember(){return head()+`<section class="card"><h2>Cari member</h2><form id="mf" style="display:grid;gap:12px"><label for="mp">Nomor HP<input id="mp" class="txt" inputmode="tel" placeholder="0812..." value="${esc(mem&&hp(mem.phone)||"")}"></label><button type="submit" class="btn">Cari</button></form>
-  ${mem===false?`<p class="err small">Nomor itu belum terdaftar sebagai member.</p>`:mem?`<div class="list"><div class="row"><span class="muted small">Nama</span><b>${esc(mem.nickname)}</b></div><div class="row"><span class="muted small">Transaksi</span><b>${mem.trx} · ${rp(mem.spent)}</b></div><div class="row"><span class="muted small">Saldo poin</span><b>${mem.bank}</b></div><div class="row"><span class="muted small">Daftar</span><b>${jam(mem.created_at)}</b></div></div>
+  ${mem===false?`<p class="err small">Nomor itu belum terdaftar sebagai member.</p>`:mem?`<div class="list"><div class="row"><span class="muted small">Nama</span><b>${esc(mem.nickname)}</b></div><div class="row"><span class="muted small">Transaksi</span><b>${mem.trx} · ${rp(mem.spent)}</b></div><div class="row"><span class="muted small">Saldo poin</span><b>${mem.bank}</b></div><div class="row"><span class="muted small">Kode ajak</span><b class="mono">${esc(mem.ref_code||"-")}</b></div><div class="row"><span class="muted small">Diajak oleh</span><b>${mem.referred_by?(mem.ref_done_at?"sudah dapat es teh":"belum belanja min."):"-"}</b></div>${mem.bonus_pulls?`<div class="row"><span class="muted small">Tarikan bonus</span><b>${mem.bonus_pulls}</b></div>`:""}<div class="row"><span class="muted small">Daftar</span><b>${jam(mem.created_at)}</b></div></div>
    ${owner()?`<form id="pf" style="display:grid;gap:10px;margin-top:6px"><label for="np">PIN baru (6 angka) · beri tahu pelanggan lewat WA<input id="np" class="txt" inputmode="numeric" maxlength="6" placeholder="••••••"></label><button type="submit" class="btn ghost">Reset PIN</button></form>`:`<p class="small muted">Reset PIN hanya bisa dilakukan pemilik.</p>`}`:""}</section>`}
 function bindMember(){$("mf").onsubmit=async e=>{e.preventDefault();const p=normPhone($("mp").value);if(!p)return toast("Nomor HP belum benar.");try{const r=await q(sb.from("kk_members").select("*").eq("phone",p).maybeSingle());mem=r||false}catch(err){toast(errMsg(err))}render()};
   const pf=$("pf");if(pf)pf.onsubmit=async e=>{e.preventDefault();const pin=$("np").value.trim();if(!/^\d{6}$/.test(pin))return toast("PIN harus 6 angka.");try{await rpc("kk_reset_pin",{p_phone:mem.phone,p_pin:pin});toast("PIN direset. Kirim PIN baru ke pelanggan lewat WA.");$("np").value=""}catch(err){toast(errMsg(err))}}}
@@ -99,7 +113,7 @@ async function start(){const {data}=await sb.auth.getSession();user=data.session
 async function logout(){await sb.auth.signOut().catch(()=>{});user=null;sum=null;recent=openV=staff=null;vc=mem=null;render()}
 async function render(){nav();if(!sb){$("app").innerHTML=`<section class="card"><h2>Belum disambungkan</h2><p class="muted">Isi <code>kolam/config.js</code> dengan Project URL dan kunci publishable Supabase.</p></section>`;return}
   if(!user||!sum){$("app").innerHTML=vAuth();bindAuth();return}
-  try{const V={nota:[vNota,bindNota],voucher:[vVoucher,bindVoucher],member:[vMember,bindMember],staf:[vStaf,bindStaf]}[tab]||[vNota,bindNota];
+  try{const V={nota:[vNota,bindNota],voucher:[vVoucher,bindVoucher],posting:[vPosting,bindPosting],member:[vMember,bindMember],staf:[vStaf,bindStaf]}[tab]||[vNota,bindNota];
     $("app").innerHTML=await V[0]();V[1]();$("out").onclick=logout}catch(e){toast(errMsg(e))}}
 async function boot(){if(!CFG.supabaseUrl||!CFG.supabaseKey||!window.supabase){render();return}
   sb=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"kolamkoi-admin-auth"}});

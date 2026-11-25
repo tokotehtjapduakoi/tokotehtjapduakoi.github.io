@@ -115,6 +115,37 @@ create table if not exists public.kk_exchanges(
 );
 create index if not exists kk_exchanges_time on public.kk_exchanges(created_at);
 
+-- ---------- Ajak Teman (kode referensi) & bonus posting ----------
+-- Angka program boleh diubah pemilik lewat Table Editor > kk_program.
+create table if not exists public.kk_program(key text primary key, value integer not null, note text not null default '');
+insert into public.kk_program values
+ ('ajak_min_belanja',20000,'Belanja minimal (Rp) teman baru supaya kode ajak berlaku'),
+ ('ajak_maks_per_bulan',15,'Maksimal teman per bulan yang memberi es teh gratis ke pengajak'),
+ ('posting_per_hari',1,'Berapa kali bonus posting boleh diklaim satu member per hari')
+on conflict (key) do nothing;
+
+alter table public.kk_members add column if not exists ref_code text unique;
+alter table public.kk_members add column if not exists referred_by uuid references public.kk_members(user_id) on delete set null;
+alter table public.kk_members add column if not exists ref_done_at timestamptz;      -- kapan teman ini memenuhi syarat
+alter table public.kk_members add column if not exists ref_paid boolean not null default false; -- pengajak dapat hadiah?
+alter table public.kk_members add column if not exists bonus_pulls integer not null default 0;
+create index if not exists kk_members_referred on public.kk_members(referred_by, ref_done_at);
+
+-- 'bonus' = voucher dari program (ajak teman / posting), bukan hasil tukar poin
+alter table public.kk_exchanges drop constraint if exists kk_exchanges_kind_check;
+alter table public.kk_exchanges add constraint kk_exchanges_kind_check check (kind in ('hadiah','skin','bonus'));
+
+create table if not exists public.kk_posts(
+  id bigserial primary key,
+  member_id uuid not null references public.kk_members(user_id) on delete cascade,
+  day date not null default ((now() at time zone 'Asia/Makassar')::date),
+  choice text not null check (choice in ('esteh','tarik')),
+  link text not null default '',
+  staff_id uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index if not exists kk_posts_member_day on public.kk_posts(member_id, day);
+
 -- ---------- Keamanan baris ----------
 alter table public.kk_cards enable row level security;
 alter table public.kk_tiers enable row level security;
@@ -127,6 +158,8 @@ alter table public.kk_inventory enable row level security;
 alter table public.kk_collection enable row level security;
 alter table public.kk_pulls enable row level security;
 alter table public.kk_exchanges enable row level security;
+alter table public.kk_program enable row level security;
+alter table public.kk_posts enable row level security;
 
 create or replace function public.kk_is_staff() returns boolean
 language sql stable security definer set search_path = public as
@@ -140,12 +173,12 @@ do $$
 declare t text;
 begin
   -- aturan boleh dibaca siapa saja
-  foreach t in array array['kk_cards','kk_tiers','kk_rewards','kk_skins'] loop
+  foreach t in array array['kk_cards','kk_tiers','kk_rewards','kk_skins','kk_program'] loop
     execute format('drop policy if exists baca on public.%I', t);
     execute format('create policy baca on public.%I for select using (true)', t);
   end loop;
   -- data pribadi: pemilik baris atau staf
-  foreach t in array array['kk_inventory','kk_collection','kk_pulls','kk_exchanges'] loop
+  foreach t in array array['kk_inventory','kk_collection','kk_pulls','kk_exchanges','kk_posts'] loop
     execute format('drop policy if exists baca on public.%I', t);
     execute format('create policy baca on public.%I for select using (member_id = auth.uid() or public.kk_is_staff())', t);
   end loop;
@@ -158,17 +191,96 @@ drop policy if exists baca on public.kk_staff;
 create policy baca on public.kk_staff for select using (user_id = auth.uid() or public.kk_is_owner());
 -- Tidak ada policy insert/update/delete: semua perubahan lewat fungsi di bawah.
 
+-- ---------- Pembantu program ----------
+create or replace function public.kk_prog(p_key text, p_default integer) returns integer
+language sql stable security definer set search_path = public as
+$$ select coalesce((select value from kk_program where key = p_key), p_default) $$;
+
+-- Kode voucher acak TK-XXXXX (tanpa huruf/angka yang mirip)
+create or replace function public.kk_voucher_code() returns text
+language plpgsql volatile security definer set search_path = public, extensions as $$
+declare v text;
+begin
+  loop
+    v := 'TK-' || upper(substr(translate(encode(extensions.gen_random_bytes(6), 'base64'), '+/=0O1IL', ''), 1, 5));
+    exit when length(v) = 8 and not exists (select 1 from kk_exchanges x where x.code = v);
+  end loop;
+  return v;
+end $$;
+
+-- Kode ajak: 3-6 huruf dari nama panggilan + 3 karakter acak, mis. RINA-7KQ
+create or replace function public.kk_new_ref_code(p_nick text) returns text
+language plpgsql volatile security definer set search_path = public, extensions as $$
+declare base text; c text;
+begin
+  base := upper(left(regexp_replace(coalesce(p_nick, ''), '[^A-Za-z]', '', 'g'), 6));
+  if length(base) < 3 then base := 'KOI'; end if;
+  loop
+    c := base || '-' || upper(substr(translate(encode(extensions.gen_random_bytes(6), 'base64'), '+/=0O1IL', ''), 1, 3));
+    exit when length(c) = length(base) + 4 and not exists (select 1 from kk_members where ref_code = c);
+  end loop;
+  return c;
+end $$;
+
+-- Beri voucher program (tidak memakai poin)
+create or replace function public.kk_give_bonus(p_member uuid, p_item text) returns text
+language plpgsql security definer set search_path = public as $$
+declare v text := kk_voucher_code();
+begin
+  insert into kk_exchanges(member_id, kind, item, points, cards, code) values (p_member, 'bonus', p_item, 0, '{}'::jsonb, v);
+  return v;
+end $$;
+
+-- Undian kartu (dipakai tarikan nota & tarikan bonus)
+create or replace function public.kk_do_pulls(p_member uuid, p_n integer, p_nota text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare m kk_members; t text; x float8; c text; cards text[] := '{}'; v_secret boolean := false;
+begin
+  select * into m from kk_members where user_id = p_member for update;
+  for i in 1..p_n loop
+    m.pity_sr := m.pity_sr + 1; m.pity_ur := m.pity_ur + 1;
+    if m.pity_ur >= 40 then t := 'UR';
+    elsif m.pity_sr >= 10 then t := case when random() < 0.03 / 0.20 then 'UR' else 'SR' end;
+    else x := random(); t := case when x < 0.03 then 'UR' when x < 0.20 then 'SR' else 'R' end;
+    end if;
+    if t <> 'R' then m.pity_sr := 0; end if;
+    if t = 'UR' then m.pity_ur := 0; end if;
+    select id into c from kk_cards d2 where d2.tier = t and not d2.secret order by random() limit 1;
+    cards := cards || c;
+    insert into kk_pulls(member_id, nota, card_id, tier) values (m.user_id, p_nota, c, t);
+    insert into kk_inventory(member_id, card_id, qty) values (m.user_id, c, 1)
+      on conflict (member_id, card_id) do update set qty = kk_inventory.qty + 1;
+    insert into kk_collection(member_id, card_id) values (m.user_id, c) on conflict do nothing;
+  end loop;
+
+  -- kartu rahasia: terbuka saat ke-12 koi biasa pernah dimiliki
+  if (select count(*) from kk_collection k join kk_cards d on d.id = k.card_id where k.member_id = m.user_id and not d.secret)
+       = (select count(*) from kk_cards d2 where not d2.secret)
+     and not exists (select 1 from kk_collection k join kk_cards d on d.id = k.card_id where k.member_id = m.user_id and d.secret) then
+    for c in select d2.id from kk_cards d2 where d2.secret loop
+      insert into kk_inventory(member_id, card_id, qty) values (m.user_id, c, 1)
+        on conflict (member_id, card_id) do update set qty = kk_inventory.qty + 1;
+      insert into kk_collection(member_id, card_id) values (m.user_id, c) on conflict do nothing;
+      v_secret := true;
+    end loop;
+  end if;
+  update kk_members set pity_sr = m.pity_sr, pity_ur = m.pity_ur where user_id = m.user_id;
+  return jsonb_build_object('cards', to_jsonb(cards), 'secret', v_secret);
+end $$;
+
 -- ---------- Member baru otomatis dibuat saat daftar ----------
 -- Akun member memakai email buatan: <nomorHP>@member.tjapduakoi.id
 create or replace function public.kk_on_signup() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare ph text; nick text;
+declare ph text; nick text; v_ref text; v_by uuid;
 begin
   if new.email like '%@member.tjapduakoi.id' then
     ph := split_part(new.email, '@', 1);
     if ph !~ '^62[0-9]{8,13}$' then raise exception 'Nomor HP tidak valid'; end if;
     nick := left(coalesce(nullif(trim(new.raw_user_meta_data->>'nickname'), ''), 'Teman Koi'), 24);
-    insert into kk_members(user_id, phone, nickname) values (new.id, ph, nick);
+    v_ref := upper(trim(coalesce(new.raw_user_meta_data->>'ref', '')));
+    if v_ref <> '' then select user_id into v_by from kk_members where ref_code = v_ref; end if;
+    insert into kk_members(user_id, phone, nickname, ref_code, referred_by) values (new.id, ph, nick, kk_new_ref_code(nick), v_by);
   end if;
   return new;
 end $$;
@@ -191,7 +303,18 @@ begin
     'ex_month', coalesce((select sum(points) from kk_exchanges where member_id = m.user_id and created_at >= mon), 0),
     'skins', coalesce((select jsonb_agg(item) from kk_exchanges where member_id = m.user_id and kind = 'skin'), '[]'::jsonb),
     'vouchers', coalesce((select jsonb_agg(jsonb_build_object('nm', item, 'code', code, 'at', created_at, 'used_at', used_at) order by created_at desc)
-                 from kk_exchanges where member_id = m.user_id and kind = 'hadiah'), '[]'::jsonb)
+                 from kk_exchanges where member_id = m.user_id and kind in ('hadiah','bonus')), '[]'::jsonb),
+    'ref_code', m.ref_code,
+    'ref_month', (select count(*) from kk_members f where f.referred_by = m.user_id and f.ref_paid and f.ref_done_at >= mon),
+    'ref_total', (select count(*) from kk_members f where f.referred_by = m.user_id and f.ref_done_at is not null),
+    'ref_pending', (select count(*) from kk_members f where f.referred_by = m.user_id and f.ref_done_at is null),
+    'ref_max', kk_prog('ajak_maks_per_bulan', 15),
+    'ref_min', kk_prog('ajak_min_belanja', 20000),
+    'referred_by', (select r.nickname from kk_members r where r.user_id = m.referred_by),
+    'ref_done', m.ref_done_at is not null,
+    'can_use_ref', m.referred_by is null and m.trx = 0,
+    'bonus_pulls', m.bonus_pulls,
+    'post_today', (select count(*) from kk_posts p where p.member_id = m.user_id and p.day = (now() at time zone 'Asia/Makassar')::date)
   );
 end $$;
 
@@ -206,8 +329,9 @@ end $$;
 create or replace function public.kk_claim(p_nota text, p_total integer) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
-  m kk_members; r kk_receipts; n integer; t text; x float8; c text;
-  cards text[] := '{}'; v_secret boolean := false; v_nota text := upper(trim(p_nota));
+  m kk_members; r kk_receipts; n integer; res jsonb; v_nota text := upper(trim(p_nota));
+  v_ajak jsonb := null; v_code text; v_by kk_members; v_cnt integer;
+  mon timestamptz := date_trunc('month', now() at time zone 'Asia/Makassar') at time zone 'Asia/Makassar';
 begin
   select * into m from kk_members where user_id = auth.uid() for update;
   if not found then raise exception 'Masuk sebagai member dulu'; end if;
@@ -228,42 +352,63 @@ begin
 
   select pulls into n from kk_tiers where min_total <= r.total order by min_total desc limit 1;
   update kk_receipts set claimed_by = m.user_id, claimed_at = now() where kk_receipts.nota = r.nota;
-  if n is null then
-    return jsonb_build_object('status', 'too_small', 'total', r.total);
-  end if;
+  update kk_members set trx = trx + 1, spent = spent + r.total, fails = 0, fail_day = current_date where user_id = m.user_id;
 
-  for i in 1..n loop
-    m.pity_sr := m.pity_sr + 1; m.pity_ur := m.pity_ur + 1;
-    if m.pity_ur >= 40 then t := 'UR';
-    elsif m.pity_sr >= 10 then t := case when random() < 0.03 / 0.20 then 'UR' else 'SR' end;
-    else x := random(); t := case when x < 0.03 then 'UR' when x < 0.20 then 'SR' else 'R' end;
+  -- Ajak Teman: belanja pertama yang memenuhi syarat -> teman & pengajak dapat es teh
+  if m.referred_by is not null and m.ref_done_at is null and r.total >= kk_prog('ajak_min_belanja', 20000) then
+    v_code := kk_give_bonus(m.user_id, 'Es teh gratis · hadiah teman baru');
+    select * into v_by from kk_members where user_id = m.referred_by for update;
+    select count(*) into v_cnt from kk_members f where f.referred_by = v_by.user_id and f.ref_paid and f.ref_done_at >= mon;
+    if v_cnt < kk_prog('ajak_maks_per_bulan', 15) then
+      perform kk_give_bonus(v_by.user_id, 'Es teh gratis · ajak ' || m.nickname);
+      update kk_members set ref_done_at = now(), ref_paid = true where user_id = m.user_id;
+    else
+      update kk_members set ref_done_at = now(), ref_paid = false where user_id = m.user_id;
     end if;
-    if t <> 'R' then m.pity_sr := 0; end if;
-    if t = 'UR' then m.pity_ur := 0; end if;
-    select id into c from kk_cards d2 where d2.tier = t and not d2.secret order by random() limit 1;
-    cards := cards || c;
-    insert into kk_pulls(member_id, nota, card_id, tier) values (m.user_id, r.nota, c, t);
-    insert into kk_inventory(member_id, card_id, qty) values (m.user_id, c, 1)
-      on conflict (member_id, card_id) do update set qty = kk_inventory.qty + 1;
-    insert into kk_collection(member_id, card_id) values (m.user_id, c) on conflict do nothing;
-  end loop;
-
-  -- kartu rahasia: terbuka saat ke-12 koi biasa pernah dimiliki
-  if (select count(*) from kk_collection k join kk_cards d on d.id = k.card_id where k.member_id = m.user_id and not d.secret)
-       = (select count(*) from kk_cards d2 where not d2.secret)
-     and not exists (select 1 from kk_collection k join kk_cards d on d.id = k.card_id where k.member_id = m.user_id and d.secret) then
-    for c in select d2.id from kk_cards d2 where d2.secret loop
-      insert into kk_inventory(member_id, card_id, qty) values (m.user_id, c, 1)
-        on conflict (member_id, card_id) do update set qty = kk_inventory.qty + 1;
-      insert into kk_collection(member_id, card_id) values (m.user_id, c) on conflict do nothing;
-      v_secret := true;
-    end loop;
+    v_ajak := jsonb_build_object('code', v_code, 'oleh', v_by.nickname);
   end if;
 
-  update kk_members set pity_sr = m.pity_sr, pity_ur = m.pity_ur, trx = trx + 1, spent = spent + r.total,
-         fails = 0, fail_day = current_date
-   where user_id = m.user_id;
-  return jsonb_build_object('status', 'ok', 'total', r.total, 'pulls', n, 'cards', to_jsonb(cards), 'secret', v_secret);
+  if n is null then
+    return jsonb_build_object('status', 'too_small', 'total', r.total, 'ajak', v_ajak);
+  end if;
+  res := kk_do_pulls(m.user_id, n, r.nota);
+  return jsonb_build_object('status', 'ok', 'total', r.total, 'pulls', n, 'cards', res->'cards', 'secret', (res->>'secret')::boolean, 'ajak', v_ajak);
+end $$;
+
+-- ---------- Ajak Teman: fungsi member ----------
+-- Cek kode sebelum daftar (boleh tanpa login). Mengembalikan nama panggilan pemilik kode.
+create or replace function public.kk_ref_check(p_code text) returns text
+language sql stable security definer set search_path = public as
+$$ select nickname from kk_members where ref_code = upper(trim(p_code)) $$;
+
+-- Pasang kode teman setelah daftar (hanya sebelum transaksi pertama)
+create or replace function public.kk_use_ref(p_code text) returns text
+language plpgsql security definer set search_path = public as $$
+declare m kk_members; v_by kk_members;
+begin
+  select * into m from kk_members where user_id = auth.uid() for update;
+  if not found then raise exception 'Masuk sebagai member dulu'; end if;
+  if m.referred_by is not null then raise exception 'Kamu sudah memakai kode teman'; end if;
+  if m.trx > 0 then raise exception 'Kode teman hanya untuk member baru sebelum belanja pertama'; end if;
+  select * into v_by from kk_members where ref_code = upper(trim(p_code));
+  if not found then raise exception 'Kode tidak ditemukan. Periksa lagi hurufnya'; end if;
+  if v_by.user_id = m.user_id then raise exception 'Tidak bisa memakai kode sendiri'; end if;
+  if v_by.referred_by = m.user_id then raise exception 'Kalian tidak bisa saling memakai kode'; end if;
+  update kk_members set referred_by = v_by.user_id where user_id = m.user_id;
+  return v_by.nickname;
+end $$;
+
+-- Tarikan bonus (dari bonus posting)
+create or replace function public.kk_pull_bonus() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare m kk_members; res jsonb;
+begin
+  select * into m from kk_members where user_id = auth.uid() for update;
+  if not found then raise exception 'Masuk sebagai member dulu'; end if;
+  if m.bonus_pulls < 1 then raise exception 'Tidak ada tarikan bonus'; end if;
+  update kk_members set bonus_pulls = bonus_pulls - 1 where user_id = m.user_id;
+  res := kk_do_pulls(m.user_id, 1, 'BONUS-POSTING');
+  return jsonb_build_object('status', 'ok', 'pulls', 1, 'cards', res->'cards', 'secret', (res->>'secret')::boolean);
 end $$;
 
 -- ---------- Tukar kartu ----------
@@ -331,7 +476,7 @@ begin
         select case when m.show_on_board or m.user_id = me then m.nickname else 'Teman Koi' end n,
                sum(e.points)::int v, m.user_id = me me
           from kk_exchanges e join kk_members m on m.user_id = e.member_id
-         where e.created_at >= a and e.created_at < b
+         where e.created_at >= a and e.created_at < b and e.kind <> 'bonus'
          group by m.user_id order by v desc limit 20) x), '[]'::jsonb),
     'koleksi', coalesce((
       select jsonb_agg(row_to_json(y) order by y.t nulls last, y.v desc) from (
@@ -394,7 +539,7 @@ begin
   if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
   select e.code, e.item, e.points, e.created_at, e.used_at, m.nickname, m.phone into v
     from kk_exchanges e join kk_members m on m.user_id = e.member_id
-   where e.code = upper(trim(p_code)) and e.kind = 'hadiah';
+   where e.code = upper(trim(p_code)) and e.kind in ('hadiah','bonus');
   if not found then return null; end if;
   return to_jsonb(v);
 end $$;
@@ -404,8 +549,29 @@ language plpgsql security definer set search_path = public as $$
 begin
   if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
   update kk_exchanges set used_at = now(), used_by = auth.uid()
-   where code = upper(trim(p_code)) and kind = 'hadiah' and used_at is null;
+   where code = upper(trim(p_code)) and kind in ('hadiah','bonus') and used_at is null;
   if not found then raise exception 'Voucher tidak ada atau sudah dipakai'; end if;
+end $$;
+
+-- Bonus posting: kasir sudah melihat post/story yang men-tag @tokoteh.tjapduakoi.
+-- p_choice: 'esteh' (voucher es teh gratis) atau 'tarik' (+1 tarikan kartu).
+create or replace function public.kk_posting_bonus(p_phone text, p_choice text, p_link text default '') returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare m kk_members; v_code text; v_day date := (now() at time zone 'Asia/Makassar')::date; v_n integer;
+begin
+  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  if p_choice not in ('esteh','tarik') then raise exception 'Pilih es teh atau tarikan'; end if;
+  select * into m from kk_members where phone = p_phone for update;
+  if not found then raise exception 'Nomor itu belum terdaftar sebagai member'; end if;
+  select count(*) into v_n from kk_posts where member_id = m.user_id and day = v_day;
+  if v_n >= kk_prog('posting_per_hari', 1) then raise exception '% sudah klaim bonus posting hari ini', m.nickname; end if;
+  insert into kk_posts(member_id, day, choice, link, staff_id) values (m.user_id, v_day, p_choice, left(coalesce(trim(p_link), ''), 300), auth.uid());
+  if p_choice = 'esteh' then
+    v_code := kk_give_bonus(m.user_id, 'Es teh gratis · bonus posting');
+  else
+    update kk_members set bonus_pulls = bonus_pulls + 1 where user_id = m.user_id;
+  end if;
+  return jsonb_build_object('nickname', m.nickname, 'choice', p_choice, 'code', v_code);
 end $$;
 
 -- Reset PIN member yang lupa (khusus pemilik)
@@ -446,7 +612,9 @@ begin
     'members_today', (select count(*) from kk_members where created_at >= a),
     'receipts_today', (select count(*) from kk_receipts where created_at >= a),
     'claimed_today', (select count(*) from kk_receipts where claimed_at >= a),
-    'vouchers_open', (select count(*) from kk_exchanges where kind = 'hadiah' and used_at is null),
+    'vouchers_open', (select count(*) from kk_exchanges where kind in ('hadiah','bonus') and used_at is null),
+    'ajak_today', (select count(*) from kk_members where ref_done_at >= a),
+    'posts_today', (select count(*) from kk_posts where created_at >= a),
     'role', (select role from kk_staff where user_id = auth.uid())
   );
 end $$;
@@ -457,15 +625,19 @@ grant execute on function public.kk_me(), public.kk_update_profile(text, boolean
   public.kk_exchange(jsonb, text), public.kk_add_receipt(text, integer), public.kk_add_receipts(jsonb),
   public.kk_delete_receipt(text), public.kk_check_voucher(text), public.kk_use_voucher(text),
   public.kk_reset_pin(text, text), public.kk_set_staff(text, text, text), public.kk_admin_summary(),
-  public.kk_is_staff(), public.kk_is_owner()
+  public.kk_is_staff(), public.kk_is_owner(),
+  public.kk_use_ref(text), public.kk_pull_bonus(), public.kk_posting_bonus(text, text, text)
   to authenticated;
-grant execute on function public.kk_board(date) to anon, authenticated;
+grant execute on function public.kk_board(date), public.kk_ref_check(text) to anon, authenticated;
 
 -- ---------- Izin baca tabel ----------
 -- Project Supabase baru tidak lagi memberi izin otomatis. Hanya SELECT;
 -- baris mana yang boleh dilihat tetap diatur policy di atas, dan semua
 -- perubahan data tetap lewat fungsi.
 grant usage on schema public to anon, authenticated;
-grant select on public.kk_cards, public.kk_tiers, public.kk_rewards, public.kk_skins to anon, authenticated;
+grant select on public.kk_cards, public.kk_tiers, public.kk_rewards, public.kk_skins, public.kk_program to anon, authenticated;
 grant select on public.kk_staff, public.kk_members, public.kk_receipts, public.kk_inventory,
-  public.kk_collection, public.kk_pulls, public.kk_exchanges to authenticated;
+  public.kk_collection, public.kk_pulls, public.kk_exchanges, public.kk_posts to authenticated;
+
+-- Member lama yang belum punya kode ajak
+update public.kk_members set ref_code = public.kk_new_ref_code(nickname) where ref_code is null;

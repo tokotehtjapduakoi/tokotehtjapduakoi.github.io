@@ -19,10 +19,15 @@ window.KOI_CONFIG = {
     // Cara nomor ditampilkan di website.
     tampil: "0813 4530 6571",
     // Pesan yang otomatis terisi saat chat WA terbuka.
-    pesanTemanTarik: "Halo Toko Teh Tjap Dua Koi! Aku mau ikut Teman Tarik. Aku diajak oleh: ",
     pesanEvent: "Halo Toko Teh Tjap Dua Koi! Aku mau tanya untuk event: ",
     pesanUmum: "Halo Toko Teh Tjap Dua Koi! "
   },
+
+  /* ---------- Teman Tarik (ajak teman) ----------
+     Tombol "Ikut Teman Tarik" membuka Kolam Koi (kode ajak).
+     Aturan (minimal belanja, batas per bulan, bonus posting) diatur di
+     Supabase > Table Editor > kk_program, bukan di sini. */
+  temanTarik: "kolam/",
 
   /* ---------- Media sosial ---------- */
   instagram: {
