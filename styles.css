@@ -194,6 +194,9 @@ a.card:active { transform: translate(4px, 4px); box-shadow: 1px 1px 0 var(--hita
 .card--marun .card__ikon { background: var(--krem); color: var(--marun); }
 .card--emas   { background: var(--emas); }
 .card--krem   { background: var(--krem); }
+.card--hijau  { background: var(--hijau); color: var(--krem); }
+.card--hijau .card__ikon { background: var(--krem); color: var(--hijau); }
+.card--hijau .card__sub { color: var(--krem); opacity: .9; }
 .card--krem .card__ikon { background: var(--hijau); color: var(--krem); }
 
 .label {
@@ -208,6 +211,7 @@ a.card:active { transform: translate(4px, 4px); box-shadow: 1px 1px 0 var(--hita
   border: 2px solid var(--hitam);
 }
 .label--hijau { background: var(--hijau); color: var(--krem); }
+.label--emas  { background: var(--emas); color: #1b1408; }
 .label--abu   { background: var(--krem); color: #4A554F; }
 
 .antar { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

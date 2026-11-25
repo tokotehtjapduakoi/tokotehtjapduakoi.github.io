@@ -60,6 +60,10 @@ cabang: [
 Logo diambil apa adanya dari file asli. Untuk mengganti, unggah file baru dengan nama yang sama ke folder `assets/`:
 `logo.png` (560×560), `favicon-32.png`, `favicon-16.png`, `apple-touch-icon.png` (180×180), `og-image.jpg` (1200×630, gambar preview saat link dibagikan).
 
+## Kolam Koi (gacha member)
+
+Aplikasi member ada di folder `kolam/` (halaman member `kolam/`, kasir `kolam/admin/`). Cara mengaktifkan dan alur harian: **`kolam/PANDUAN.md`**.
+
 ## Teknis
 
 - GitHub Pages dari branch `main`, folder root. Tanpa domain berbayar, tanpa CNAME.
