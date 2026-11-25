@@ -40,15 +40,17 @@ Menu **Authentication**:
 Untuk kasir: minta mereka daftar di halaman admin dengan email masing-masing, lalu tambahkan email itu di menu **Staf**.
 
 ## Alur harian
-1. Pelanggan bayar di ESB. Kasir membuka **Admin → Nota**, lalu mengetik nomor nota dan total.
-2. Pelanggan membuka Kolam Koi dan mengetik nomor nota serta total yang sama. Kartu ditarik dan langsung masuk ke kolam.
+1. Pelanggan bayar. Kasir mencatat penjualan di **Kasir Koi** (`/kasir/`, lihat `kasir/PANDUAN.md`). Setelah lunas, layar menampilkan **kode klaim** `XXXXX-XXXXX`.
+2. Kasir memberikan kode itu ke pelanggan (ditunjukkan atau lewat WA). Pelanggan membuka Kolam Koi dan mengetik kode. Kartu ditarik dan langsung masuk ke kolam.
 3. Saat pelanggan menukar hadiah, ia menunjukkan kode `TK-XXXXX`. Kasir membuka **Admin → Voucher**, cek kodenya, berikan hadiahnya, lalu ketuk **tandai dipakai**.
 4. Kalau pelanggan lupa PIN, pemilik membuka **Admin → Member**, cari nomornya, buat PIN baru, lalu kirim lewat WA.
+
+Selama masih berdampingan dengan ESB, **jangan** daftarkan nota ESB di **Admin → Nota**. Setelah angka cocok, matikan **Klaim nomor nota lama (ESB)** di Admin → Nota. Detail ada di `kasir/PANDUAN.md`.
 
 ## Aturan yang dipakai
 - Tarikan per nota: Rp20rb = 1, Rp45rb = 2, Rp60rb = 3, Rp80rb = 4, Rp100rb = 5.
 - Peluang: Rare 80%, Super Rare 17%, Ultra Rare 3%. Super Rare dijamin paling lambat tiap 10 tarikan, Ultra Rare tiap 40.
 - Poin kartu: R = 1, SR = 5, UR = 25. Hadiah: 12 / 30 / 60 / 120 / 300 poin.
-- Satu nota hanya bisa dipakai sekali. Pelanggan harus mengetik nomor **dan** total yang benar. Setelah 10 kali salah dalam sehari, akun dikunci sampai besok.
+- Satu kode klaim hanya bisa dipakai sekali dan ada masa berlakunya (7 hari kalau terikat nomor HP, 2 jam kalau tidak). Setelah 10 kali salah dalam sehari, akun dikunci sampai besok.
 
 Hadiah, poin, dan jumlah tarikan bisa diubah di Supabase **Table Editor** (`kk_rewards`, `kk_tiers`, `kk_skins`). Website membaca angka barunya otomatis.
