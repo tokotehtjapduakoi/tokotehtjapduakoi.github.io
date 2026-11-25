@@ -142,6 +142,7 @@ function vSelesai(){const s=J.selesai,r=s.hasil;
 
 function vJual(){
   const kepala=`<div class="head"><h1>Kasir</h1><button type="button" class="btn sm ghost" id="out">Keluar</button></div><p class="small muted">${esc(S.me.name||S.user.email)}</p>`;
+  const P=window.KasirPemilik,h=P&&P.view(S.tab);if(h!=null)return kepala+h; // layar pemilik (pemilik.js)
   if(!S.me.shift)return kepala+vTanpaShift();
   if(S.tab==="nota")return kepala+vNota();
   if(S.tab==="kas")return kepala+vKas();
@@ -194,6 +195,7 @@ async function lunas(){if(!bisaLunas())return;J.sibuk=true;J.pesan="";segarBayar
   J.sibuk=false;await segarBilah();render()}
 
 function bindJual(){
+  if(window.KasirPemilik&&window.KasirPemilik.bind(S.tab))return;
   if(!S.me.shift){bindTanpaShift();return}
   if(S.tab==="nota"){bindNota();return}
   if(S.tab==="kas"){bindKas();return}
@@ -388,16 +390,19 @@ function bindNota(){
     N.sel=null;N.hapusTap=null;await segarBilah();render()}}
 
 /* ---------- Tab bawah (daftar bisa ditambah, mis. tab pemilik) ---------- */
+// Entri: [id, label, badge?, [tab lain yang ikut menyalakan tab ini]?]. Pemilik memakai daftar dari pemilik.js.
 const TAB=[["jual","Jual"],["nota","Nota"],["kas","Kas"]];
+const adaPemilik=()=>!!(window.KasirPemilik&&S.me&&S.me.role==="pemilik");
+const daftarTab=()=>adaPemilik()?window.KasirPemilik.tabs():TAB;
 function renderTab(){let n=$("tab");
   if(!n){n=document.createElement("nav");n.id="tab";n.className="tab";n.setAttribute("aria-label","Menu kasir");document.body.appendChild(n)}
-  const tampil=S.screen==="jual"&&!!S.me&&!!S.me.shift;n.hidden=!tampil;document.body.classList.toggle("ada-tab",tampil);
+  const tampil=S.screen==="jual"&&!!S.me&&(!!S.me.shift||adaPemilik());n.hidden=!tampil;document.body.classList.toggle("ada-tab",tampil);
   if(!tampil){n.innerHTML="";return}
-  n.innerHTML=TAB.map(t=>`<button type="button" data-tab="${t[0]}"${S.tab===t[0]?' aria-current="page"':""}>${t[1]}</button>`).join("");
+  n.innerHTML=daftarTab().map(t=>`<button type="button" data-tab="${t[0]}"${S.tab===t[0]||(t[3]||[]).includes(S.tab)?' aria-current="page"':""}>${t[1]}${t[2]?`<span class="badge" aria-hidden="true">${esc(t[2])}</span>`:""}</button>`).join("");
   n.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>pindahTab(b.dataset.tab))}
 async function pindahTab(t){if(S.tab===t)return;S.tab=t;N.sel=null;N.batal=null;N.hapusTap=null;
   await segarBilah();
-  render();if(t==="nota")muatNota()}
+  render();if(t==="nota")muatNota();if(adaPemilik())window.KasirPemilik.masuk(t)}
 document.addEventListener("click",e=>{const a=e.target.closest&&e.target.closest("a[data-lapor]");
   if(a){catatLapor(a.dataset.lapor);setTimeout(()=>{if(S.screen==="jual"&&S.tab==="nota")render()},0)}},true);
 
@@ -412,8 +417,9 @@ function render(){const app=$("app");
 
 /* ---------- Alur ---------- */
 async function muatMe(){S.me=await rpc("pos_me",{p_device:S.device});
-  if(S.me.device==="approved"){S.catalog=await rpc("pos_catalog");S.screen="jual"}else S.screen="tunggu";
-  simpanSiap()}
+  // Pemilik selalu masuk ke layar kerja: HP-nya sendiri disetujui dari tab Setujui.
+  if(S.me.device==="approved"||S.me.role==="pemilik"){S.catalog=await rpc("pos_catalog");S.screen="jual"}else S.screen="tunggu";
+  simpanSiap();if(adaPemilik())window.KasirPemilik.sesudahMe()}
 async function mulai(nama){S.device=deviceId();
   try{await rpc("pos_device_request",{p_device:S.device,p_label:((nama?nama+" · ":"")+labelUA()).slice(0,80)});
     localStorage.setItem("kasir.device.diminta","1");await muatMe()}
@@ -428,7 +434,7 @@ async function keluar(otomatis){const n=await antrean();
   const r=await S.sb.auth.signOut().catch(e=>({error:e}));
   if(r&&r.error)await S.sb.auth.signOut({scope:"local"}).catch(()=>{});
   localStorage.removeItem("kasir.me");
-  Object.assign(S,{user:null,me:null,catalog:null,screen:"masuk",antre:[],tab:"jual",tutup:null});J=J0();K=K0();N=N0();B=B0();galat="";render()}
+  Object.assign(S,{user:null,me:null,catalog:null,screen:"masuk",antre:[],tab:"jual",tutup:null});J=J0();K=K0();N=N0();B=B0();galat="";if(window.KasirPemilik)window.KasirPemilik.reset();render()}
 
 /* ---------- Logout otomatis ---------- */
 let aktif=Date.now();
@@ -482,5 +488,7 @@ async function boot(){if("serviceWorker" in navigator)navigator.serviceWorker.re
   else{const {data,error}=await S.sb.auth.getSession();S.user=data.session&&data.session.user;
     if(!S.user&&error&&putus(error))S.user=userTersimpan()}
   if(S.user)await mulai("");else render()}
-boot();
+// Layar pemilik (pemilik.js, dimuat sesudah berkas ini) memakai bagian-bagian ini.
+window.KasirApp={S,rpc,esc,rp,toast,errMsg,putus,waktuHP,render,renderTab,pindahTab,muatMe,daring};
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();
 })();

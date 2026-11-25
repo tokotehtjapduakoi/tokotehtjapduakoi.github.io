@@ -278,6 +278,24 @@ begin
   return v || jsonb_build_object('version', md5(v::text));
 end $$;
 
+-- Semua menu, ukuran, metode, dan diskon termasuk yang nonaktif (layar Atur pemilik).
+create or replace function public.pos_catalog_all() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  return jsonb_build_object(
+    'items', coalesce((select jsonb_agg(jsonb_build_object('id', i.id, 'name', i.name, 'category', i.category,
+        'sort', i.sort, 'active', i.active,
+        'variants', coalesce((select jsonb_agg(jsonb_build_object('id', x.id, 'name', x.name, 'price', x.price,
+                                    'active', x.active) order by x.id)
+                               from pos_variants x where x.item_id = i.id), '[]'::jsonb))
+        order by i.sort, i.id) from pos_items i), '[]'::jsonb),
+    'methods', coalesce((select jsonb_agg(jsonb_build_object('id', m.id, 'name', m.name, 'kind', m.kind,
+        'active', m.active, 'sort', m.sort) order by m.sort, m.id) from pos_pay_methods m), '[]'::jsonb),
+    'discounts', coalesce((select jsonb_agg(jsonb_build_object('id', d.id, 'name', d.name, 'kind', d.kind,
+        'value', d.value, 'active', d.active) order by d.id) from pos_discounts d), '[]'::jsonb));
+end $$;
+
 -- ---------- Simpan (pemilik + 2 langkah). p.id null = baru; kolom yang tak disebut tidak diubah ----------
 create or replace function public.pos_item_save(p jsonb) returns bigint
 language plpgsql security definer set search_path = public as $$
@@ -794,7 +812,7 @@ begin
   return coalesce((
     select jsonb_agg(jsonb_build_object(
       'id', q.id, 'nota_id', n.id, 'no', n.no, 'total', n.total, 'method', m.name,
-      'client_at', n.client_at, 'cashier', coalesce(st.name, ''), 'reason', q.reason,
+      'client_at', n.client_at, 'cashier', coalesce(st.name, ''), 'reason', q.reason, 'photo_path', n.photo_path,
       'requested_at', q.requested_at,
       'claimed', coalesce(r.claimed_by is not null, false),
       'pulls', (select count(*) from kk_pulls p where r.claimed_by is not null and p.nota = r.nota),
@@ -973,7 +991,7 @@ end $$;
 -- Internal, sengaja tidak di-grant: pos__audit, pos__device_status, pos_device_ok, pos__photo_ok, pos__nota_out,
 -- pos__nota_lock, pos__nota_lines_lock, pos__shift_out, pos_shift_expected.
 grant execute on function public.pos_device_request(text, text), public.pos_devices_list(),
-  public.pos_device_decide(text, boolean), public.pos_catalog(), public.pos_item_save(jsonb),
+  public.pos_device_decide(text, boolean), public.pos_catalog(), public.pos_catalog_all(), public.pos_item_save(jsonb),
   public.pos_variant_save(jsonb), public.pos_method_save(jsonb), public.pos_discount_save(jsonb),
   public.pos_me(text), public.pos_checkout(jsonb), public.pos_my_notas(),
   public.pos_shift_open(text, int), public.pos_shift_close(int, text, boolean), public.pos_shift_receive(text, int),

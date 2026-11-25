@@ -112,3 +112,15 @@ def test_storage_folder_sendiri(db):
     assert db.sql("select count(*) from storage.objects", sebagai=kasir) == [("1",)]
     member = db.member("6281200000009")
     assert db.sql("select count(*) from storage.objects", sebagai=member) == [("0",)]
+
+
+def test_katalog_lengkap_khusus_pemilik_aal2(db):
+    kasir, pemilik = siapkan(db)
+    mid = db.sql("select pos_item_save('{\"name\":\"Teh\"}')", sebagai=pemilik)[0][0]
+    db.sql(f"select pos_variant_save('{{\"item_id\":{mid},\"name\":\"14 oz\",\"price\":15000}}')", sebagai=pemilik)
+    db.sql(f"select pos_item_save('{{\"id\":{mid},\"active\":false}}')", sebagai=pemilik)
+    assert db.sql("select jsonb_array_length(pos_catalog()->'items')", sebagai=kasir) == [("0",)]
+    assert db.sql("select pos_catalog_all()->'items'->0->>'active'", sebagai=pemilik) == [("false",)]
+    assert db.sql("select jsonb_array_length(pos_catalog_all()->'items'->0->'variants')", sebagai=pemilik) == [("1",)]
+    ditolak(db, "select pos_catalog_all()", kasir)
+    ditolak(db, "select pos_catalog_all()", {**pemilik, "aal": "aal1"})

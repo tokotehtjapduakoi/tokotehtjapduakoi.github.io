@@ -86,3 +86,19 @@ body.ada-tab .toast{bottom:calc(env(safe-area-inset-bottom,0px) + 76px)}
 .batal{display:grid;gap:10px}
 .selisih{font:800 28px var(--f-display);color:var(--marun)}
 textarea{font:500 16px var(--f-body);padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);width:100%;resize:vertical}
+/* Layar pemilik */
+.tab button{position:relative}
+.badge{display:inline-block;min-width:20px;margin-left:4px;padding:1px 6px;border-radius:999px;background:var(--marun);color:#fff;font:700 12px var(--f-body);vertical-align:middle}
+.angka{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.angka div{display:grid;gap:2px}
+.angka b{font:800 20px var(--f-display);color:var(--hijau);overflow-wrap:anywhere}
+.peringatan{border-color:var(--marun)}
+.peringatan h2{color:var(--marun)}
+.warn{color:var(--marun);font-weight:500}
+.coret{text-decoration:line-through}
+.aksi2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.baris-atur{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--line)}
+.baris-atur .nama{flex:1 1 80px;font-weight:500}
+.baris-atur input{flex:1 1 90px;min-width:0;width:auto}
+.hasil{border-color:var(--hijau)}
+select{width:100%}
