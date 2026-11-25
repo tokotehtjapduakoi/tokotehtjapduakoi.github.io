@@ -65,6 +65,7 @@ def test_laporan_pengajuan_tertunda_dihitung(db, toko):
     n = nota_tiga(toko)
     ajukan(db, toko, n["id"])
     assert laporan(db, toko.pemilik)["pending_voids"] == 1
+    assert laporan(db, toko.pemilik, "2000-01-01")["pending_voids"] == 1  # semua hari
 
 
 def test_laporan_khusus_pemilik(db, toko):
@@ -85,6 +86,15 @@ def test_laporan_batas_hari_wita(db, toko):
     assert laporan(db, toko.pemilik, kemarin)["omzet"] == 30000
     assert laporan(db, toko.pemilik)["omzet"] == 0
     assert laporan(db, toko.pemilik, kemarin)["offline"]["count"] == 1
+    # 00.30 WITA hari ini = tanggal UTC kemarin; harus masuk hari ini WITA, bukan kemarin
+    awal = db.sql("select (date_trunc('day', now() at time zone 'Asia/Makassar') + interval '30 minutes') "
+                  "at time zone 'Asia/Makassar'")[0][0]
+    if db.sql(f"select '{awal}'::timestamptz > now() - interval '1 minute'")[0][0] == "t":
+        return  # 00.30 WITA belum lewat (jam uji 00.00-00.30 WITA): nota akan ditolak sebagai masa depan
+    toko.checkout(toko.payload(code="AAAAA22222", offline=True, client_at=awal, total=15000,
+                               lines=[{"variant_id": toko.vid, "qty": 1}]), )
+    assert laporan(db, toko.pemilik)["omzet"] == 15000
+    assert laporan(db, toko.pemilik, kemarin)["omzet"] == 30000
 
 
 def test_laporan_offline_selisih_tahan_dan_diskon(db, toko):
@@ -133,7 +143,6 @@ def test_laporan_shift_selisih_dan_modal_awal(db, laci):
     laci.jual(laci.a, a1["id"], 30000)
     laci.tutup(laci.a, 125000, True)  # seharusnya 130.000
     laci.terima(laci.b, 120000)  # terima: kurang 5.000 dari hitungan A
-    b = db.sql("select id from pos_shifts where received_from is not null")[0][0]
     laci.tutup(laci.b, 120000, False)  # tutup toko
     laci.buka(laci.a, 100000)  # buka baru, padahal laci terakhir 120.000
     s = laporan(db, laci.pemilik)["shifts"]
@@ -143,7 +152,7 @@ def test_laporan_shift_selisih_dan_modal_awal(db, laci):
     assert [x["received_count"] for x in s] == [120000, None, None]
     assert [x["selisih_terima"] for x in s] == [-5000, None, None]
     assert [x["start_mismatch"] for x in s] == [False, False, True]
-    assert s[2]["closed_at"] is None and b
+    assert s[2]["closed_at"] is None
 
 
 def test_laporan_modal_awal_cocok(db, laci):
@@ -181,8 +190,7 @@ def test_void_hitungan_member_tidak_di_bawah_nol(db, toko):
 
 def test_void_belum_diklaim_tidak_menyentuh_member(db, toko):
     n = nota_tiga(toko)
-    m = db.member("6281200000001")
+    db.member("6281200000001")
     db.sql("update kk_members set trx = 4, spent = 100000")
     putuskan(db, toko, ajukan(db, toko, n["id"]), True)
     assert db.sql("select trx, spent from kk_members") == [("4", "100000")]
-    assert m

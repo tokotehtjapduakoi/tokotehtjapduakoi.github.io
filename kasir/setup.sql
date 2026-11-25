@@ -130,6 +130,7 @@ create table if not exists public.pos_notas(
   held boolean not null default false
 );
 create index if not exists pos_notas_shift on public.pos_notas(shift_id);
+create index if not exists pos_notas_client_at on public.pos_notas(client_at);
 
 create table if not exists public.pos_nota_lines(
   id bigserial primary key,
@@ -870,11 +871,13 @@ create or replace function public.pos_report(p_day date default null) returns js
 language plpgsql stable security definer set search_path = public as $$
 declare
   d date := coalesce(p_day, (now() at time zone 'Asia/Makassar')::date);
-  v_omzet bigint; v_notas int;
+  v_from timestamptz; v_to timestamptz; v_omzet bigint; v_notas int;
 begin
   if not kk_is_owner() then raise exception 'Khusus pemilik'; end if;
+  v_from := d::timestamp at time zone 'Asia/Makassar';
+  v_to := (d + 1)::timestamp at time zone 'Asia/Makassar';
   select coalesce(sum(total), 0), count(*) into v_omzet, v_notas
-    from pos_notas where status = 'lunas' and (client_at at time zone 'Asia/Makassar')::date = d;
+    from pos_notas where status = 'lunas' and client_at >= v_from and client_at < v_to;
   return jsonb_build_object(
     'day', d,
     'omzet', v_omzet,
@@ -884,13 +887,13 @@ begin
       select jsonb_agg(jsonb_build_object('name', x.name, 'total', x.total, 'count', x.cnt) order by x.total desc, x.name)
         from (select m.name, sum(n.total) as total, count(*) as cnt
                 from pos_notas n join pos_pay_methods m on m.id = n.method_id
-               where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d
+               where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
                group by m.name) x), '[]'::jsonb),
     'by_cashier', coalesce((
       select jsonb_agg(jsonb_build_object('name', x.name, 'total', x.total, 'count', x.cnt) order by x.total desc, x.name)
         from (select coalesce(st.name, '') as name, sum(n.total) as total, count(*) as cnt
                 from pos_notas n left join kk_staff st on st.user_id = n.cashier
-               where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d
+               where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
                group by coalesce(st.name, '')) x), '[]'::jsonb),
     'top_items', coalesce((
       select jsonb_agg(jsonb_build_object('item', x.item, 'variant', x.variant, 'qty', x.qty, 'total', x.total)
@@ -899,12 +902,12 @@ begin
                 select l.item_name as item, l.variant_name as variant, sum(l.qty) as qty,
                        sum(case when l.free then 0 else l.qty * l.price end) as total
                   from pos_nota_lines l join pos_notas n on n.id = l.nota_id
-                 where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d
+                 where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
                  group by l.item_name, l.variant_name) t
                order by qty desc, total desc, item, variant limit 10) x), '[]'::jsonb),
     'discounts', (select jsonb_build_object('count', count(*), 'total', coalesce(sum(discount_amt), 0))
                     from pos_notas where status = 'lunas' and discount_amt > 0
-                     and (client_at at time zone 'Asia/Makassar')::date = d),
+                     and client_at >= v_from and client_at < v_to),
     'voids', coalesce((
       select jsonb_agg(jsonb_build_object('no', n.no, 'total', n.total, 'reason', q.reason,
                          'by', coalesce(rq.name, ''), 'approved_by', coalesce(ap.name, '')) order by n.no)
@@ -912,17 +915,16 @@ begin
         join pos_void_requests q on q.nota_id = n.id and q.approved
         left join kk_staff rq on rq.user_id = q.requested_by
         left join kk_staff ap on ap.user_id = q.decided_by
-       where n.status = 'batal' and (n.client_at at time zone 'Asia/Makassar')::date = d), '[]'::jsonb),
-    'pending_voids', (select count(*) from pos_void_requests q join pos_notas n on n.id = q.nota_id
-                       where q.decided_at is null and (n.client_at at time zone 'Asia/Makassar')::date = d),
+       where n.status = 'batal' and n.client_at >= v_from and n.client_at < v_to), '[]'::jsonb),
+    'pending_voids', (select count(*) from pos_void_requests where decided_at is null),
     'offline', jsonb_build_object(
       'count', (select count(*) from pos_notas where status = 'lunas' and offline
-                   and (client_at at time zone 'Asia/Makassar')::date = d),
+                   and client_at >= v_from and client_at < v_to),
       'mismatch', coalesce((select jsonb_agg(jsonb_build_object('no', no, 'total', total, 'server_total', server_total) order by no)
                               from pos_notas where status = 'lunas' and price_mismatch
-                               and (client_at at time zone 'Asia/Makassar')::date = d), '[]'::jsonb),
+                               and client_at >= v_from and client_at < v_to), '[]'::jsonb),
       'held', (select count(*) from pos_notas where status = 'lunas' and held
-                  and (client_at at time zone 'Asia/Makassar')::date = d)),
+                  and client_at >= v_from and client_at < v_to)),
     'shifts', coalesce((
       select jsonb_agg(jsonb_build_object(
                'cashier', coalesce(st.name, ''), 'opened_at', s.opened_at, 'closed_at', s.closed_at,
@@ -935,18 +937,18 @@ begin
                     select max(p2.id) from pos_shifts p2 where p2.id < s.id and p2.handover = false)
                    and s.cash_start <> p.cash_counted)) order by s.opened_at, s.id)
         from pos_shifts s left join kk_staff st on st.user_id = s.cashier
-       where (s.opened_at at time zone 'Asia/Makassar')::date = d), '[]'::jsonb),
+       where s.opened_at >= v_from and s.opened_at < v_to), '[]'::jsonb),
     'codes', (select jsonb_build_object(
                 'issued', count(*),
                 'claimed', count(*) filter (where r.claimed_by is not null),
                 'expired_unclaimed', count(*) filter (where r.claimed_by is null and r.expires_at < now()))
                 from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
-               where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d),
+               where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to),
     'suspicious', coalesce((
       select jsonb_agg(jsonb_build_object('no', r.nota,
                'reason', 'Diklaim kurang dari 60 detik oleh member yang sering mengklaim nota kasir yang sama') order by r.nota)
         from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
-       where n.status = 'lunas' and (n.client_at at time zone 'Asia/Makassar')::date = d
+       where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
          and r.claimed_by is not null and r.claimed_at - n.received_at < interval '60 seconds'
          and (select count(*) from kk_receipts r2
                where r2.claimed_by = r.claimed_by and r2.created_by = r.created_by
