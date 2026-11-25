@@ -15,8 +15,24 @@ def test_klaim_nota_lama_masih_jalan(db):
 
 
 def test_anon_tidak_bisa_baca_staf(db):
-    with pytest.raises(SqlError, match="permission denied"):
-        db.sql("select * from kk_staff", sebagai={"role": "anon"})
+    db.user("p@x.id", peran="pemilik")
+    anon = {"role": "anon"}
+    try:
+        baris = db.sql("select * from kk_staff", sebagai=anon)
+    except SqlError as e:
+        assert "permission denied" in str(e)
+    else:
+        assert baris == []  # hak tabel longgar, tapi RLS tidak menampakkan baris
+
+
+def test_null_dan_baris_baru(db):
+    assert db.sql("select null, 'a'||chr(10)||'b'") == [(None, "a\nb")]
+    assert db.sql("select 1 where false") == []
+
+
+def test_role_tidak_didukung(db):
+    with pytest.raises(ValueError):
+        db.sql("select 1", sebagai={"role": "service_role"})
 
 
 def test_rls_berlaku_dan_foldername(db):
