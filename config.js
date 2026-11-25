@@ -19,10 +19,15 @@ window.KOI_CONFIG = {
     // Cara nomor ditampilkan di website.
     tampil: "0813 4530 6571",
     // Pesan yang otomatis terisi saat chat WA terbuka.
-    pesanTemanTarik: "Halo Toko Teh Tjap Dua Koi! Aku mau ikut Teman Tarik. Aku diajak oleh: ",
     pesanEvent: "Halo Toko Teh Tjap Dua Koi! Aku mau tanya untuk event: ",
     pesanUmum: "Halo Toko Teh Tjap Dua Koi! "
   },
+
+  /* ---------- Teman Tarik (ajak teman) ----------
+     Tombol "Ikut Teman Tarik" membuka Kolam Koi (kode ajak).
+     Aturan (minimal belanja, batas per bulan, bonus posting) diatur di
+     Supabase > Table Editor > kk_program, bukan di sini. */
+  temanTarik: "kolam/",
 
   /* ---------- Media sosial ---------- */
   instagram: {
@@ -44,14 +49,14 @@ window.KOI_CONFIG = {
 
   /* ---------- Musik ----------
      tampil : true = tombol musik muncul di pojok kanan bawah, false = disembunyikan.
-     file   : kosongkan ("") untuk memakai musik orisinal bawaan "Teh Tarik Sore"
-              (dimainkan langsung oleh browser, tanpa file, jadi ringan).
-              Kalau punya lagu sendiri yang BOLEH dipakai (bukan lagu orang lain tanpa izin),
-              unggah file MP3-nya ke repo lalu tulis namanya, misalnya "musik.mp3".
-     judul  : nama lagu yang muncul saat tombol ditekan lama / diarahkan kursor. */
+     file   : lagu yang diputar. Bawaan: lagu orisinal "Teh Tarik Sore" (bebas hak cipta).
+              Mau ganti lagu sendiri yang BOLEH dipakai? Unggah file MP3-nya ke folder
+              assets/ lalu tulis namanya, misalnya "assets/lagu-saya.mp3".
+              Usahakan file kecil (di bawah 1 MB) supaya cepat diputar di sinyal lemah.
+     judul  : nama lagu (muncul di tombol dan di layar kunci HP). */
   musik: {
     tampil: true,
-    file: "",
+    file: "assets/musik-teh-tarik-sore.mp3",
     judul: "Teh Tarik Sore"
   },
 

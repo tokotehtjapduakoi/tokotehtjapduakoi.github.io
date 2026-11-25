@@ -19,7 +19,7 @@
 
   var W = C.whatsapp || {};
   var links = {
-    temanTarik: wa(W.pesanTemanTarik),
+    temanTarik: C.temanTarik || "kolam/",
     event: wa(W.pesanEvent),
     waUmum: wa(W.pesanUmum),
     instagram: amanUrl(C.instagram && C.instagram.link),
