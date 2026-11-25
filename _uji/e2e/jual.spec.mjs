@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { after, before, test } from "node:test";
 import pg from "pg";
-import { bukaHalaman, chromium, jalankanServer, masuk, rpcSebagai, siapkanDb } from "./bantu.mjs";
+import { ambilFoto as ambilFotoUji, bukaHalaman, buatFoto, chromium, isiKeranjang, jalankanServer, rpcSebagai, siapJual, siapkanDb } from "./bantu.mjs";
 
 let db, server, browser, foto, sql;
 before(async () => {
@@ -15,9 +10,7 @@ before(async () => {
   browser = await chromium.launch();
   sql = new pg.Client({ connectionString: db.conninfo });
   await sql.connect();
-  // gambar uji 3000x2000 yang cukup "ramai" (plasma) supaya pengecilan benar-benar diuji
-  foto = path.join(mkdtempSync(path.join(tmpdir(), "foto-")), "uji.jpg");
-  execFileSync("convert", ["-size", "3000x2000", "plasma:fractal", "-quality", "95", foto]);
+  foto = buatFoto();
 });
 after(async () => {
   await sql?.end();
@@ -26,28 +19,8 @@ after(async () => {
   await db?.tutup();
 });
 
-// Kasir Ocha: HP disetujui, shift terbuka (hanya satu shift boleh terbuka, jadi galat "masih ada" diabaikan).
-async function siap(page, buka) {
-  await buka();
-  await masuk(page, "ocha@uji.id");
-  await page.getByText("Menunggu persetujuan pemilik").waitFor();
-  const device = await page.evaluate(() => localStorage.getItem("kasir.device"));
-  await rpcSebagai(server, "pemilik@uji.id", "pos_device_decide", { p_device: device, p_approve: true });
-  await rpcSebagai(server, "ocha@uji.id", "pos_shift_open", { p_device: device, p_cash_start: 100000 })
-    .catch((e) => assert.match(e.message, /Masih ada shift terbuka/));
-  await page.getByRole("button", { name: "Cek lagi" }).click();
-  await page.getByRole("button", { name: "Teh Tarik" }).waitFor();
-}
-async function isiKeranjang(page, qty = 1) {
-  await page.getByRole("button", { name: "Teh Tarik" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: /14 oz/ }).click();
-  for (let i = 1; i < qty; i++) await page.getByRole("button", { name: "Tambah satu" }).click();
-}
-async function ambilFoto(page) {
-  const [fc] = await Promise.all([page.waitForEvent("filechooser"), page.getByRole("button", { name: "Ambil foto bukti" }).click()]);
-  await fc.setFiles(foto);
-  await page.getByAltText("Pratinjau foto bukti").waitFor();
-}
+const siap = (page, buka) => siapJual(page, buka, server);
+const ambilFoto = (page) => ambilFotoUji(page, foto);
 
 test("jual tunai lengkap", async () => {
   const { context, page, buka } = await bukaHalaman(browser, server);
@@ -174,31 +147,7 @@ test("kode bentrok diulang otomatis dengan kode baru", async () => {
   await context.close();
 });
 
-async function bayarQris(page) {
-  await page.getByRole("button", { name: "Bayar", exact: true }).click();
-  await page.getByRole("button", { name: "QRIS" }).click();
-  await ambilFoto(page);
-}
-const sha = (kode) => createHash("sha256").update(kode.replace("-", "")).digest("hex");
-
-test("jawaban hilang setelah tersimpan: Lunas lagi memakai kode yang sama (hash cocok)", async () => {
-  const { context, page, buka } = await bukaHalaman(browser, server);
-  await siap(page, buka);
-  await isiKeranjang(page);
-  await bayarQris(page);
-  const sebelum = (await sql.query("select count(*)::int as n from pos_notas")).rows[0].n;
-  await fetch(server.url + "/__uji/putus-setelah-rpc", { method: "POST", body: JSON.stringify({ fn: "pos_checkout", kali: 1 }) });
-  await page.getByRole("button", { name: "Lunas" }).click();
-  await page.getByText("Koneksi internet bermasalah").waitFor();
-  assert.equal((await sql.query("select count(*)::int as n from pos_notas")).rows[0].n, sebelum + 1, "nota sudah tersimpan");
-  await page.getByRole("button", { name: "Lunas" }).click();
-  await page.locator(".qr svg").waitFor();
-  assert.equal((await sql.query("select count(*)::int as n from pos_notas")).rows[0].n, sebelum + 1, "tidak ada nota ganda");
-  const kode = await page.locator("#kode-klaim").innerText();
-  const r = await sql.query("select code_hash from kk_receipts where pos_nota_id = (select id from pos_notas order by received_at desc limit 1)");
-  assert.equal(r.rows[0].code_hash, sha(kode));
-  await context.close();
-});
+// Jawaban hilang setelah tersimpan: lihat offline.spec.mjs "kirim ulang tidak dobel" (nota masuk antrean, dikirim ulang).
 
 test("diskon persen yang tidak habis dibagi: total di layar = total server", async () => {
   await sql.query("update pos_variants set price = 17555 where item_id = (select id from pos_items where name = 'Milo Tarik')");

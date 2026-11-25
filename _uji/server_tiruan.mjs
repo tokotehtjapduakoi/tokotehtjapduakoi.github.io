@@ -212,7 +212,8 @@ async function storage(req, res, url) {
 // ---------- Statis ----------
 const TIPE = { ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".mjs": "application/javascript",
   ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
-  ".ico": "image/x-icon", ".webp": "image/webp", ".woff2": "font/woff2" };
+  ".ico": "image/x-icon", ".webp": "image/webp", ".woff2": "font/woff2",
+  ".webmanifest": "application/manifest+json" };
 function statis(req, res, url) {
   let f = path.join(WEB, decodeURIComponent(url.pathname));
   if (f !== WEB && !f.startsWith(WEB + path.sep)) return kirim(res, 403, { message: "dilarang" });

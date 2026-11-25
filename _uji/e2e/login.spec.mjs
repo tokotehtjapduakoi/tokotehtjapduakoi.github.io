@@ -60,16 +60,20 @@ test("logout otomatis setelah diam 30 menit", async () => {
 
 test("tidak logout otomatis selama antrean belum kosong", async () => {
   const { context, page, buka } = await bukaHalaman(browser, server);
-  await page.addInitScript(() => { window.Antrean = { jumlah: () => 1 }; });
   await page.clock.install();
   await buka();
   await masuk(page, "ocha@uji.id");
   await page.getByText("Menunggu persetujuan pemilik").waitFor();
+  // satu nota di antrean asli (HP belum disetujui, jadi server menolaknya dan nota tetap tersimpan)
+  await page.evaluate(() => Antrean.simpan({ id: crypto.randomUUID(), payload: { id: "x" }, foto: new Blob(["x"]),
+    fotoPath: "x.jpg", dibuat: Date.now() }));
+  assert.equal(await page.evaluate(() => Antrean.jumlah()), 1);
   await page.clock.fastForward("31:00");
   await page.clock.fastForward("00:30");
   await page.waitForTimeout(300);
   assert.equal(await formLogin(page).count(), 0);
   await page.getByText("Menunggu persetujuan pemilik").waitFor();
+  assert.equal(await page.evaluate(() => Antrean.jumlah()), 1);
   await context.close();
 });
 

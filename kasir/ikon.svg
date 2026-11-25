@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Kasir Koi">
+  <!-- Latar penuh (aman untuk ikon maskable); gambar di dalam zona aman tengah. -->
+  <rect width="512" height="512" fill="#0E4D32"/>
+  <circle cx="256" cy="256" r="150" fill="#F6EFDF"/>
+  <!-- Dua koi melingkar: marun dan emas -->
+  <path d="M256 126c62 0 106 52 96 104-8 40-48 56-80 40-30-15-50-6-58 22-6-58 4-98 42-120-30-18-60-12-84 6 20-34 50-52 84-52z" fill="#7A1F2B"/>
+  <path d="M256 386c-62 0-106-52-96-104 8-40 48-56 80-40 30 15 50 6 58-22 6 58-4 98-42 120 30 18 60 12 84-6-20 34-50 52-84 52z" fill="#C9A24B"/>
+  <circle cx="306" cy="182" r="9" fill="#F6EFDF"/>
+  <circle cx="206" cy="330" r="9" fill="#0E4D32"/>
+</svg>

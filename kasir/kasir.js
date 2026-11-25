@@ -1,4 +1,4 @@
-/* Kasir Tjap Dua Koi: login staf, persetujuan perangkat, logout otomatis, layar jual. */
+/* Kasir Tjap Dua Koi: login staf, persetujuan perangkat, logout otomatis, layar jual, mode offline. */
 (function(){
 "use strict";
 const CFG=window.KASIR_CONFIG||{};
@@ -9,11 +9,20 @@ const putus=e=>/Failed to fetch|NetworkError|Load failed|network error/i.test((e
 const errMsg=e=>putus(e)?"Koneksi internet bermasalah.":((e&&e.message)||String(e));
 const DIAM_MAKS=30*60*1000; // logout otomatis setelah 30 menit tanpa sentuhan/ketikan
 
-const S={sb:null,user:null,me:null,catalog:null,device:null,screen:"masuk"};
+const S={sb:null,user:null,me:null,catalog:null,device:null,screen:"masuk",antre:[]};
 let galat="",sibuk=false,emailTerakhir="";
 async function rpc(fn,a){const {data,error}=await S.sb.rpc(fn,a||{});if(error)throw error;return data}
-// Antrean nota offline (Task 10). Selama belum ada, dianggap kosong.
-const antrean=()=>window.Antrean&&typeof window.Antrean.jumlah==="function"?window.Antrean.jumlah():0;
+// Jumlah nota di antrean offline (termasuk yang ditolak server: belum sampai, jadi tidak boleh hilang).
+const antrean=async()=>{try{return await window.Antrean.jumlah()}catch(e){return 0}};
+const daring=()=>navigator.onLine!==false;
+
+/* ---------- Simpanan untuk buka tanpa internet ---------- */
+const bacaJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"null")}catch(e){return null}};
+const tulisJson=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+function simpanSiap(){tulisJson("kasir.me",{uid:S.user.id,me:S.me});if(S.catalog)tulisJson("kasir.catalog",S.catalog)}
+// Kasir yang sama, HP sudah disetujui, katalog ada: boleh berjualan offline dengan data terakhir.
+function siapOffline(){const m=bacaJson("kasir.me"),c=bacaJson("kasir.catalog");
+  return m&&S.user&&m.uid===S.user.id&&m.me&&m.me.device==="approved"&&c?{me:m.me,catalog:c}:null}
 
 /* ---------- Perangkat ---------- */
 function deviceId(){let id=localStorage.getItem("kasir.device");
@@ -63,9 +72,11 @@ function hp62(s){let d=digit(s);if(!d)return "";
   return /^62[0-9]{8,13}$/.test(d)?d:null}
 const cat=()=>S.catalog||{items:[],methods:[],discounts:[]};
 const metodeAktif=()=>cat().methods.find(m=>String(m.id)===String(J.metode));
+// Voucher TK- hanya bisa dicek server: saat offline tidak dipakai.
+const voucherDipakai=()=>daring()?J.voucher.trim():"";
 // Hitungan sama dengan server: voucher menggratiskan satu porsi baris pertama, lalu diskon dari sisanya.
 function hitung(){const sub=J.cart.reduce((a,l)=>a+l.qty*l.price,0);
-  const vc=J.voucher.trim()&&J.cart.length?Math.min(J.cart[0].price,sub):0;
+  const vc=voucherDipakai()&&J.cart.length?Math.min(J.cart[0].price,sub):0;
   const d=cat().discounts.find(x=>String(x.id)===String(J.disc));
   const dasar=sub-vc;
   const pot=!d?0:d.kind==="persen"?Math.floor(dasar*d.value/100):Math.min(d.value,dasar);
@@ -97,7 +108,8 @@ function vBayar(){const c=cat(),h=hitung();
   <div class="cepat"><button type="button" data-cepat="pas">Uang pas</button>${[20000,50000,100000].map(n=>`<button type="button" data-cepat="${n}">${n/1000}rb</button>`).join("")}</div>
   <p id="kembali" class="kembali">${vKembali(h)}</p></div>`:""}
   ${c.discounts.length?`<label for="dk">Diskon (opsional)<select id="dk"><option value="">Tanpa diskon</option>${c.discounts.map(d=>`<option value="${esc(d.id)}"${String(d.id)===String(J.disc)?" selected":""}>${esc(d.name)} (${d.kind==="persen"?esc(d.value)+"%":rp(d.value)})</option>`).join("")}</select></label>`:""}
-  <label for="vc">Voucher TK- (opsional)<input id="vc" autocomplete="off" autocapitalize="characters" placeholder="TK-..." value="${esc(J.voucher)}"></label>
+  <label for="vc">Voucher TK- (opsional)<input id="vc" autocomplete="off" autocapitalize="characters" placeholder="TK-..." value="${esc(J.voucher)}"${daring()?"":" disabled"}></label>
+  ${daring()?"":`<span class="small muted">Voucher TK- tidak bisa dipakai saat offline.</span>`}
   <label for="hp">Nomor HP pelanggan (opsional)<input id="hp" type="tel" inputmode="tel" autocomplete="off" placeholder="0812..." value="${esc(J.hp)}"></label>
   <p class="err" id="hperr" role="alert"></p>
   <div class="fotobox"><button type="button" class="btn ghost" id="foto"${J.fotoKunci?" disabled":""}>${J.fotoKunci?"Foto terkunci":J.foto?"Ganti foto bukti":"Ambil foto bukti"}</button>
@@ -116,7 +128,7 @@ function segarBayar(){const h=hitung();
 
 function vSelesai(){const s=J.selesai,r=s.hasil;
   const aktif=r.code_status==="aktif";
-  return `<section class="card selesai"><h2>Lunas</h2><p class="small muted">Nota <b class="kode">${esc(r.no)}</b></p>
+  return `<section class="card selesai"><h2>Lunas</h2>${s.antre?`<p class="antre">Tersimpan di HP, akan terkirim otomatis</p>`:`<p class="small muted">Nota <b class="kode">${esc(r.no)}</b></p>`}
   <div class="total"><span>Total</span><b>${rp(r.total)}</b></div>
   ${s.tunai&&r.change!=null?`<p class="kembali besar">Kembalian ${rp(r.change)}</p>`:""}
   ${aktif?`<div class="qr" aria-label="QR kode klaim">${KasirKode.qrSvg(KasirKode.urlKlaim(s.kode))}</div>
@@ -135,43 +147,44 @@ function vJual(){
 function tambah(v,it){const l=J.cart.find(x=>String(x.vid)===String(v.id));
   if(l)l.qty=Math.min(l.qty+1,999);else J.cart.push({vid:v.id,item:it.name,variant:v.name,price:v.price,qty:1})}
 // Harga/menu berubah di server: muat ulang katalog, hitung ulang harga keranjang, buang baris yang sudah tidak ada.
-async function muatUlangMenu(){S.catalog=await rpc("pos_catalog");
+async function muatUlangMenu(){S.catalog=await rpc("pos_catalog");tulisJson("kasir.catalog",S.catalog);
   const peta={};for(const i of S.catalog.items)for(const v of i.variants||[])peta[v.id]={i,v};
   if(J.disc&&!S.catalog.discounts.some(d=>String(d.id)===String(J.disc)))J.disc="";
   if(J.metode&&!S.catalog.methods.some(m=>String(m.id)===String(J.metode)))J.metode=S.catalog.methods.length?S.catalog.methods[0].id:null;
   J.cart=J.cart.filter(l=>peta[l.vid]).map(l=>{const {i,v}=peta[l.vid];return {...l,item:i.name,variant:v.name,price:v.price}})}
 
-// Langkah kirim nota: unggah foto, lalu pos_checkout. Satu fungsi supaya antrean offline (Task 10) bisa membungkusnya.
-// saatUnggah dipanggil begitu foto tersimpan di server (sejak itu foto jadi bukti dan tidak boleh diganti).
-async function kirimNota(p,foto,saatUnggah){
-  const {error}=await S.sb.storage.from("bukti").upload(p.photo_path,foto,{contentType:"image/jpeg",upsert:false});
-  if(error&&String(error.statusCode||error.status)!=="409"&&!/already exists|duplicate/i.test(error.message||""))throw error;
-  if(saatUnggah)saatUnggah();
-  try{return {hasil:await rpc("pos_checkout",{p}),kode:p.code}}
-  catch(e){if(!/Kode bentrok/i.test((e&&e.message)||""))throw e;
-    p.code=KasirKode.buat();return {hasil:await rpc("pos_checkout",{p}),kode:p.code}}}
-
 function bangunPayload(){const h=hitung(),m=metodeAktif();
   return {id:J.notaId,device:S.device,client_at:new Date().toISOString(),offline:false,
     lines:J.cart.map(l=>({variant_id:l.vid,qty:l.qty})),discount_id:J.disc?Number(J.disc):null,
-    voucher_code:J.voucher.trim()||null,method_id:m.id,total:h.total,cash_received:h.tunai?h.uang:null,
+    voucher_code:voucherDipakai()||null,method_id:m.id,total:h.total,cash_received:h.tunai?h.uang:null,
     photo_path:`${S.user.id}/${J.notaId}.jpg`,customer_phone:hp62(J.hp)||null,code:J.kode}}
 // Baris untuk teks WA: seperti nota di server (voucher = 1 porsi baris pertama gratis).
 function barisWa(){const l=J.cart.map(x=>({qty:x.qty,item:x.item,variant:x.variant,price:x.price}));
-  if(J.voucher.trim()&&l.length){const f=l[0];if(f.qty>1){l[0]={...f,qty:f.qty-1};l.push({...f,qty:1,variant:f.variant+" (voucher)",price:0})}else l[0]={...f,variant:f.variant+" (voucher)",price:0}}
+  if(voucherDipakai()&&l.length){const f=l[0];if(f.qty>1){l[0]={...f,qty:f.qty-1};l.push({...f,qty:1,variant:f.variant+" (voucher)",price:0})}else l[0]={...f,variant:f.variant+" (voucher)",price:0}}
   return l}
+const teksSelesai=s=>KasirKode.teksWa({no:s.hasil.no||"(dikirim nanti)",lines:s.baris,total:s.hasil.total,method:s.metode,kode:s.kode});
+// Lunas: nota (dengan kode klaim dan foto) selalu masuk antrean dulu, lalu dicoba dikirim.
+// Gagal jaringan: layar Selesai tetap tampil dari data HP. Ditolak server: nota dibuang dari antrean, kasir memperbaiki.
 async function lunas(){if(!bisaLunas())return;J.sibuk=true;J.pesan="";segarBayar();$("lunas").textContent="Menyimpan...";
-  let p=null;
-  try{p=bangunPayload();const h=hitung(),m=metodeAktif(),baris=barisWa(),hp=hp62(J.hp)||"";
-    const {hasil,kode}=await kirimNota(p,J.foto,()=>{J.fotoKunci=true});
-    const teks=KasirKode.teksWa({no:hasil.no,lines:baris,total:hasil.total,method:m.name,kode});
-    J.selesai={hasil,kode,tunai:h.tunai,hp,teks};J.tahap="selesai";
-    if(J.fotoUrl)URL.revokeObjectURL(J.fotoUrl);J.fotoUrl=null;J.foto=null}
-  catch(err){const msg=errMsg(err);
-    if(/Harga berubah|muat ulang menu/i.test(msg)){try{await muatUlangMenu();J.pesan="Harga menu berubah. Menu sudah dimuat ulang dan total dihitung ulang. Periksa lagi, lalu tekan Lunas.";
+  const p=bangunPayload(),h=hitung(),m=metodeAktif();
+  const s={id:p.id,tunai:h.tunai,hp:hp62(J.hp)||"",baris:barisWa(),metode:m.name,kode:p.code,antre:true,
+    hasil:{no:null,total:h.total,change:h.tunai?h.uang-h.total:null,code_status:h.total>0?"aktif":"tidak_ada"}};
+  try{await Antrean.simpan({id:p.id,payload:p,foto:J.foto,fotoPath:p.photo_path,dibuat:Date.now()})}
+  catch(err){J.sibuk=false;J.pesan="Nota gagal disimpan di HP: "+errMsg(err);render();return}
+  J.fotoKunci=true; // sejak masuk antrean, foto ini bukti nota ini
+  let r={hasil:{},ditolak:{}};
+  try{r=await Antrean.kirimSemua(S.sb)}catch(e){}
+  const tolak=r.ditolak[p.id];
+  if(tolak){await Antrean.hapus(p.id).catch(()=>{});
+    if(/Harga berubah|muat ulang menu/i.test(tolak)){try{await muatUlangMenu();J.pesan="Harga menu berubah. Menu sudah dimuat ulang dan total dihitung ulang. Periksa lagi, lalu tekan Lunas.";
       if(!J.cart.length)J.tahap="menu"}catch(e2){J.pesan=errMsg(e2)}}
-    else J.pesan=msg}
-  finally{J.sibuk=false;if(p)J.kode=p.code}render()}
+    else J.pesan=tolak}
+  else{const ok=r.hasil[p.id];
+    if(ok)Object.assign(s,{hasil:ok.hasil,kode:ok.kode,antre:false});
+    else{const it=await Antrean.ambil(p.id).catch(()=>null);if(it)s.kode=it.payload.code}
+    s.teks=teksSelesai(s);J.selesai=s;J.tahap="selesai";
+    if(J.fotoUrl)URL.revokeObjectURL(J.fotoUrl);J.fotoUrl=null;J.foto=null}
+  J.sibuk=false;await segarBilah();render()}
 
 function bindJual(){
   const cs=$("cek-shift");if(cs)cs.onclick=async()=>{cs.disabled=true;try{await muatMe()}catch(e){toast(errMsg(e))}render()};
@@ -208,35 +221,69 @@ function bindPutus(){$("ulang").onclick=()=>mulai("")}
 function render(){const app=$("app");
   if(!S.sb){app.innerHTML=`<section class="card"><h2>Belum disambungkan</h2><p class="muted">Isi <code>kasir/config.js</code> dengan Project URL dan kunci publishable Supabase.</p></section>`;return}
   const V={masuk:[vMasuk,bindMasuk],tunggu:[vTunggu,bindTunggu],jual:[vJual,bindJual],putus:[vPutus,bindPutus]}[S.screen];
-  app.innerHTML=V[0]();V[1]();const o=$("out");if(o)o.onclick=()=>keluar(false)}
+  app.innerHTML=V[0]();V[1]();const o=$("out");if(o)o.onclick=()=>keluar(false);renderBilah()}
 
 /* ---------- Alur ---------- */
 async function muatMe(){S.me=await rpc("pos_me",{p_device:S.device});
-  if(S.me.device==="approved"){S.catalog=await rpc("pos_catalog");S.screen="jual"}else S.screen="tunggu"}
+  if(S.me.device==="approved"){S.catalog=await rpc("pos_catalog");S.screen="jual"}else S.screen="tunggu";
+  simpanSiap()}
 async function mulai(nama){S.device=deviceId();
   try{await rpc("pos_device_request",{p_device:S.device,p_label:((nama?nama+" · ":"")+labelUA()).slice(0,80)});
     localStorage.setItem("kasir.device.diminta","1");await muatMe()}
-  catch(err){if(putus(err)){S.screen="putus";render();return}  // jangan keluarkan kasir hanya karena sinyal
+  catch(err){if(putus(err)){const o=siapOffline();  // jangan keluarkan kasir hanya karena sinyal
+      if(o){Object.assign(S,o,{screen:"jual"});aktif=Date.now();render();kirimAntrean();return}
+      S.screen="putus";render();return}
     const m=errMsg(err);await keluar(true);galat=m==="Khusus kasir"?"Akun ini bukan staf toko. Minta pemilik menambahkan emailmu.":m;render();return}
-  aktif=Date.now();render()}
+  aktif=Date.now();render();kirimAntrean()}
 // otomatis=true: dipanggil sistem (diam/gagal masuk). Keluar manual ditolak selama antrean belum kosong.
-async function keluar(otomatis){const n=antrean();
+async function keluar(otomatis){const n=await antrean();
   if(n>0){if(!otomatis)toast(`Masih ada ${n} nota belum terkirim. Sambungkan internet dulu.`);return}
   const r=await S.sb.auth.signOut().catch(e=>({error:e}));
   if(r&&r.error)await S.sb.auth.signOut({scope:"local"}).catch(()=>{});
-  Object.assign(S,{user:null,me:null,catalog:null,screen:"masuk"});J=J0();galat="";render()}
+  localStorage.removeItem("kasir.me");
+  Object.assign(S,{user:null,me:null,catalog:null,screen:"masuk",antre:[]});J=J0();galat="";render()}
 
 /* ---------- Logout otomatis ---------- */
 let aktif=Date.now();
 ["pointerdown","keydown"].forEach(ev=>addEventListener(ev,()=>{aktif=Date.now()},{capture:true,passive:true}));
-function cekDiam(){if(!S.user||Date.now()-aktif<DIAM_MAKS||antrean()>0)return;
-  keluar(true).then(()=>toast("Keluar otomatis: 30 menit tidak dipakai."))}
+let cekDiamJalan=false;
+async function cekDiam(){if(cekDiamJalan||!S.user||Date.now()-aktif<DIAM_MAKS)return;cekDiamJalan=true;
+  try{if(await antrean()>0)return;await keluar(true);if(!S.user)toast("Keluar otomatis: 30 menit tidak dipakai.")}
+  finally{cekDiamJalan=false}}
 setInterval(cekDiam,30*1000);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)cekDiam()});
 
-async function boot(){if(!CFG.supabaseUrl||!CFG.supabaseKey||!window.supabase){render();return}
+/* ---------- Antrean offline & bilah status ---------- */
+// Pemicu: aplikasi dibuka, event online, dan tiap 30 detik selama ada nota menunggu.
+// Tidak jalan saat Lunas sedang berproses (Lunas mengirim sendiri dan butuh hasilnya).
+async function kirimAntrean(){if(!S.user||J.sibuk)return;
+  try{const r=await Antrean.kirimSemua(S.sb),s=J.selesai,ok=s&&s.antre&&r.hasil[s.id];
+    if(ok){Object.assign(s,{hasil:ok.hasil,kode:ok.kode,antre:false});s.teks=teksSelesai(s);if(J.tahap==="selesai")render()}}
+  catch(e){}
+  await segarBilah()}
+async function segarBilah(){try{S.antre=await Antrean.daftar()}catch(e){S.antre=[]}renderBilah()}
+function linkLapor(it){const p=it.payload||{};
+  const t=["Nota kasir gagal terkirim ke server.",`ID: ${it.id}`,`Waktu di HP: ${p.client_at||"-"}`,`Total: ${rp(p.total)}`,`Alasan: ${it.error}`].join("\n");
+  return "https://wa.me/?text="+encodeURIComponent(t)}
+function renderBilah(){const b=$("bilah");if(!S.user){b.hidden=true;return}
+  const on=daring(),n=S.antre.length,gagal=S.antre.filter(it=>it.error);
+  b.hidden=false;b.className="bilah "+(on?"on":"off");
+  b.innerHTML=`<p><span class="titik" aria-hidden="true"></span>${on?"Online":"Offline"}${n?` · ${n} nota menunggu`:""}</p>
+  ${gagal.map(it=>`<div class="gagal"><p class="small">Nota ${esc(rp(it.payload&&it.payload.total))} ditolak server: ${esc(it.error)}</p>
+    <a class="btn sm" target="_blank" rel="noopener" href="${esc(linkLapor(it))}">Laporkan ke pemilik</a></div>`).join("")}`}
+function ubahSinyal(){renderBilah();if(S.screen==="jual"&&J.tahap==="bayar"&&!J.sibuk)render()}
+addEventListener("online",()=>{ubahSinyal();kirimAntrean()});
+addEventListener("offline",ubahSinyal);
+setInterval(()=>{if(S.antre.some(it=>!it.error))kirimAntrean()},30*1000);
+
+// Sesi tersimpan di HP (dipakai saat offline, tanpa menunggu percobaan refresh token).
+const userTersimpan=()=>{const a=bacaJson("kasir-auth");return a&&a.user||null};
+async function boot(){if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+  if(!CFG.supabaseUrl||!CFG.supabaseKey||!window.supabase){render();return}
   S.sb=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"kasir-auth"}});
-  const {data}=await S.sb.auth.getSession();S.user=data.session&&data.session.user;
+  if(!daring()&&userTersimpan())S.user=userTersimpan();
+  else{const {data,error}=await S.sb.auth.getSession();S.user=data.session&&data.session.user;
+    if(!S.user&&error&&putus(error))S.user=userTersimpan()}
   if(S.user)await mulai("");else render()}
 boot();
 })();

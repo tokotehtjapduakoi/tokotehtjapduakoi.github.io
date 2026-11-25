@@ -61,3 +61,12 @@ select{font:500 16px var(--f-body);padding:12px;border:1px solid var(--line);bor
 a.btn{display:flex;align-items:center;justify-content:center;text-decoration:none}
 .btn.ghost{background:transparent}
 .selesai .kode{font-size:17px}
+/* Bilah status & antrean offline */
+.bilah{max-width:560px;margin:0 auto;padding:8px max(16px,env(safe-area-inset-left,0px)) 0;display:grid;gap:8px;font-size:13px;font-weight:600}
+.bilah[hidden]{display:none}
+.bilah>p{display:flex;align-items:center;gap:8px;color:var(--muted)}
+.titik{width:10px;height:10px;border-radius:50%;background:#2e9d5b;flex:none}
+.bilah.off .titik{background:#e07b1a}
+.bilah.off>p{color:#b25a08}
+.gagal{background:var(--paper);border:1px solid var(--marun);border-radius:12px;padding:10px 12px;display:grid;gap:8px;justify-items:start;font-weight:400}
+.antre{font-weight:600;color:#b25a08}

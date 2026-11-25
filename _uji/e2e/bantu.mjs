@@ -1,5 +1,7 @@
 // Alat bantu uji e2e: database contoh, server tiruan, browser, login.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
 import readline from "node:readline";
@@ -41,12 +43,13 @@ export async function jalankanServer(conninfo) {
   return { url, tutup: () => { p.kill(); return berhenti(p); } };
 }
 
-/** Konteks + halaman baru (localStorage kosong = HP baru) dengan config.js diarahkan ke server tiruan. */
+/** Konteks + halaman baru (localStorage kosong = HP baru) dengan config.js diarahkan ke server tiruan.
+ *  Rute dipasang di konteks (bukan halaman) supaya permintaan dari service worker juga kena. */
 export async function bukaHalaman(browser, server) {
   const context = await browser.newContext();
   await context.route(/^https:\/\/fonts\./, (r) => r.abort()); // uji tidak butuh font dari internet
   const page = await context.newPage();
-  await page.route("**/kasir/config.js", (r) => r.fulfill({
+  await context.route("**/kasir/config.js", (r) => r.fulfill({
     contentType: "application/javascript",
     body: `window.KASIR_CONFIG=${JSON.stringify({ supabaseUrl: server.url, supabaseKey: "uji-anon",
       kolamUrl: "https://tokotehtjapduakoi.github.io/kolam/" })};`,
@@ -73,4 +76,34 @@ export async function rpcSebagai(server, email, fn, args = {}) {
   const isi = await r.json();
   if (!r.ok) throw new Error(isi.message);
   return isi;
+}
+
+/** Gambar uji 3000x2000 yang cukup "ramai" (plasma) supaya pengecilan foto benar-benar diuji. */
+export function buatFoto() {
+  const f = path.join(mkdtempSync(path.join(tmpdir(), "foto-")), "uji.jpg");
+  execFileSync("convert", ["-size", "3000x2000", "plasma:fractal", "-quality", "95", f]);
+  return f;
+}
+
+/** Kasir (bawaan Ocha) masuk: HP disetujui, shift terbuka (hanya satu shift boleh terbuka, galat "masih ada" diabaikan). */
+export async function siapJual(page, buka, server, email = "ocha@uji.id") {
+  await buka();
+  await masuk(page, email);
+  await page.getByText("Menunggu persetujuan pemilik").waitFor();
+  const device = await page.evaluate(() => localStorage.getItem("kasir.device"));
+  await rpcSebagai(server, "pemilik@uji.id", "pos_device_decide", { p_device: device, p_approve: true });
+  await rpcSebagai(server, email, "pos_shift_open", { p_device: device, p_cash_start: 100000 })
+    .catch((e) => { if (!/Masih ada shift terbuka/.test(e.message)) throw e; });
+  await page.getByRole("button", { name: "Cek lagi" }).click();
+  await page.getByRole("button", { name: "Teh Tarik" }).waitFor();
+}
+export async function isiKeranjang(page, qty = 1) {
+  await page.getByRole("button", { name: "Teh Tarik" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /14 oz/ }).click();
+  for (let i = 1; i < qty; i++) await page.getByRole("button", { name: "Tambah satu" }).click();
+}
+export async function ambilFoto(page, foto) {
+  const [fc] = await Promise.all([page.waitForEvent("filechooser"), page.getByRole("button", { name: "Ambil foto bukti" }).click()]);
+  await fc.setFiles(foto);
+  await page.getByAltText("Pratinjau foto bukti").waitFor();
 }

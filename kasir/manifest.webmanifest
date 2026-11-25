@@ -1,0 +1,12 @@
+{
+  "name": "Kasir Koi",
+  "short_name": "Kasir Koi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#0E4D32",
+  "background_color": "#F6EFDF",
+  "icons": [
+    { "src": "ikon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
