@@ -21,29 +21,19 @@ const segar=tab=>{if(S.screen==="jual"&&S.tab===tab)A.render()};
 
 /* ---------- Verifikasi 2 langkah (TOTP) ---------- */
 async function muatMfa(){const m=P.mfa;if(m.tahap)return;m.tahap="memuat";
-  try{const {data,error}=await S.sb.auth.mfa.listFactors();if(error)throw error;
-    const ada=(data.totp||[])[0];
-    // faktor yang dulu didaftarkan tetapi belum pernah dibuktikan dibuang supaya pendaftaran bisa diulang
-    for(const f of (data.all||[]))if(f.factor_type==="totp"&&f.status==="unverified")await S.sb.auth.mfa.unenroll({factorId:f.id}).catch(()=>{});
-    m.faktor=ada?ada.id:null;m.tahap=ada?"kode":"belum"}
+  try{m.faktor=await KoiMfa.faktor(S.sb);m.tahap=m.faktor?"kode":"belum"}
   catch(e){m.tahap=null;m.pesan=A.errMsg(e)}
   segar(ini())}
 async function mulaiDaftar(){const m=P.mfa;if(m.sibuk)return;m.sibuk=true;m.pesan="";A.render();
-  try{const {data,error}=await S.sb.auth.mfa.enroll({factorType:"totp",friendlyName:"Kasir "+new Date().toISOString().slice(0,16)});
-    if(error)throw error;m.enroll={id:data.id,qr:data.totp.qr_code,secret:data.totp.secret};m.tahap="daftar"}
+  try{m.enroll=await KoiMfa.daftar(S.sb,"Kasir");m.tahap="daftar"}
   catch(e){m.pesan=A.errMsg(e)}
   m.sibuk=false;A.render()}
 async function kirimKode(){const m=P.mfa;if(m.sibuk||m.kode.length!==6)return;m.sibuk=true;m.pesan="";A.render();
-  try{let r;
-    if(m.tahap==="daftar"){const c=await S.sb.auth.mfa.challenge({factorId:m.enroll.id});if(c.error)throw c.error;
-      r=await S.sb.auth.mfa.verify({factorId:m.enroll.id,challengeId:c.data.id,code:m.kode})}
-    else r=await S.sb.auth.mfa.challengeAndVerify({factorId:m.faktor,code:m.kode});
-    if(r.error)throw r.error;
-    const f=await S.sb.auth.refreshSession();if(f.error)throw f.error;
+  try{await KoiMfa.buktikan(S.sb,{daftar:m.tahap==="daftar"?m.enroll:null,faktorId:m.faktor,kode:m.kode});
     await A.muatMe();
     if(!mfaOk())throw new Error("Verifikasi belum diterima server. Coba lagi.");
     P.mfa=P0().mfa;masuk(S.tab);sesudahMe()}
-  catch(e){m.pesan=/invalid|expired|code/i.test(e.message||"")?"Kode salah atau sudah kedaluwarsa. Coba kode yang baru.":A.errMsg(e);m.kode=""}
+  catch(e){m.pesan=KoiMfa.kodeSalah(e)?"Kode salah atau sudah kedaluwarsa. Coba kode yang baru.":A.errMsg(e);m.kode=""}
   m.sibuk=false;A.render()}
 function vMfa(){const m=P.mfa;
   const pesan=`<p class="err" role="alert">${esc(m.pesan)}</p>`;

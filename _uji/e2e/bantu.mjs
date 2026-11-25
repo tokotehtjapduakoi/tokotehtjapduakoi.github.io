@@ -54,6 +54,10 @@ export async function bukaHalaman(browser, server) {
     body: `window.KASIR_CONFIG=${JSON.stringify({ supabaseUrl: server.url, supabaseKey: "uji-anon",
       kolamUrl: "https://tokotehtjapduakoi.github.io/kolam/", waNomor: "6281345306571" })};`,
   }));
+  await context.route(/\/kolam\/config\.js(\?.*)?$/, (r) => r.fulfill({
+    contentType: "application/javascript",
+    body: `window.KOLAM_CONFIG=${JSON.stringify({ supabaseUrl: server.url, supabaseKey: "uji-anon", waNomor: "6281345306571" })};`,
+  }));
   return { context, page, buka: () => page.goto(server.url + "/kasir/") };
 }
 

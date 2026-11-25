@@ -10,24 +10,63 @@ const hp=p=>p?"0"+String(p).slice(2):"";
 const jam=t=>new Date(t).toLocaleString("id-ID",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
 function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,3200)}
 const errMsg=e=>{const m=(e&&e.message)||String(e);if(/Failed to fetch|NetworkError/i.test(m))return "Koneksi internet bermasalah.";return m};
-let sb=null,user=null,sum=null,tab="nota",authMode="masuk",tiers=[[100000,5],[80000,4],[60000,3],[45000,2],[20000,1]],busy=false;
+let sb=null,user=null,sum=null,tab="voucher",authMode="masuk",tiers=[[100000,5],[80000,4],[60000,3],[45000,2],[20000,1]],busy=false;
 const pullsFor=t=>{for(const[m,n]of tiers)if(t>=m)return n;return 0};
 async function rpc(fn,a){const {data,error}=await sb.rpc(fn,a||{});if(error)throw error;return data}
 async function q(p){const {data,error}=await p;if(error)throw error;return data}
 const owner=()=>sum&&sum.role==="pemilik";
+const mfaOk=()=>!!(sum&&sum.mfa);
+// Fungsi pemilik di server butuh verifikasi 2 langkah (aal2), jadi tab Nota (daftar/hapus nota) hanya untuk pemilik yang sudah verifikasi.
+const tabs=()=>[...(owner()&&mfaOk()?[["nota","Nota"]]:[]),["voucher","Voucher"],["member","Member"],...(owner()?[["staf","Staf"]]:[])];
 
 function nav(){const n=$("tabs");if(!sum){n.hidden=true;return}n.hidden=false;
-  const T=[["nota","Nota"],["voucher","Voucher"],["member","Member"],...(owner()?[["staf","Staf"]]:[])];n.style.setProperty("--n",T.length);
+  const T=tabs();if(!T.some(t=>t[0]===tab))tab=T[0][0];n.style.setProperty("--n",T.length);
   n.innerHTML=T.map(([k,l])=>`<button type="button" data-k="${k}" ${k===tab?'aria-current="page"':""}>${l}</button>`).join("");
   n.querySelectorAll("button").forEach(b=>b.onclick=()=>{tab=b.dataset.k;render()})}
 function head(){return `<div class="head"><h1>Admin Kolam Koi</h1><button type="button" class="btn sm ghost" id="out">Keluar</button></div>
   <p class="small muted">${esc(user.email)} · ${sum.role}</p>
-  <div class="stats"><div class="stat"><b>${sum.receipts_today}</b><span>nota hari ini</span></div><div class="stat"><b>${sum.claimed_today}</b><span>diklaim hari ini</span></div><div class="stat"><b>${sum.members}</b><span>member (+${sum.members_today})</span></div></div>`}
+  <div class="stats"><div class="stat"><b>${sum.receipts_today}</b><span>nota hari ini</span></div><div class="stat"><b>${sum.claimed_today}</b><span>diklaim hari ini</span></div><div class="stat"><b>${sum.members}</b><span>member (+${sum.members_today})</span></div></div>${owner()&&!mfaOk()?vMfa():""}`}
+
+/* ---------- Verifikasi 2 langkah (pemilik) ---------- */
+// Panggilan ke Supabase ada di ../mfa.js (dipakai bersama dengan Kasir); di sini hanya tampilan.
+const mf0=()=>({tahap:null,faktor:null,enroll:null,kode:"",pesan:"",sibuk:false});
+let mf=mf0();
+async function muatMfa(){if(mf.tahap)return;mf.tahap="memuat";
+  try{mf.faktor=await KoiMfa.faktor(sb);mf.tahap=mf.faktor?"kode":"belum"}catch(e){mf.tahap=null;mf.pesan=errMsg(e)}
+  render()}
+async function mulaiDaftar(){if(mf.sibuk)return;mf.sibuk=true;mf.pesan="";render();
+  try{mf.enroll=await KoiMfa.daftar(sb,"Admin Kolam");mf.tahap="daftar"}catch(e){mf.pesan=errMsg(e)}
+  mf.sibuk=false;render()}
+async function kirimKode(){if(mf.sibuk||mf.kode.length!==6)return;mf.sibuk=true;mf.pesan="";render();
+  try{await KoiMfa.buktikan(sb,{daftar:mf.tahap==="daftar"?mf.enroll:null,faktorId:mf.faktor,kode:mf.kode});
+    await refresh();if(!mfaOk())throw new Error("Verifikasi belum diterima server. Coba lagi.");
+    mf=mf0();toast("Verifikasi 2 langkah berhasil.")}
+  catch(e){mf.pesan=KoiMfa.kodeSalah(e)?"Kode salah atau sudah kedaluwarsa. Coba kode yang baru.":errMsg(e);mf.kode=""}
+  mf.sibuk=false;render()}
+function vMfa(){const pesan=`<p class="err small" role="alert">${esc(mf.pesan)}</p>`;
+  const kode=`<label for="mfa-kode">Kode 6 angka dari aplikasi autentikator<input id="mfa-kode" class="txt" inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="${esc(mf.kode)}"></label>${pesan}
+    <button type="button" class="btn" id="mfa-kirim"${mf.kode.length===6&&!mf.sibuk?"":" disabled"}>Verifikasi</button>`;
+  const kepala=`<h2>Verifikasi 2 langkah</h2>`;
+  if(mf.tahap==="daftar"&&mf.enroll)return `<section class="card">${kepala}<p class="small muted">Pindai gambar ini dengan aplikasi autentikator (Google Authenticator, Authy, dan sejenisnya), lalu ketik kode 6 angkanya.</p>
+    <div style="text-align:center"><img src="${esc(mf.enroll.qr)}" alt="QR verifikasi 2 langkah" width="200" height="200"></div>
+    <p class="small muted">Tidak bisa memindai? Ketik kode rahasia ini di aplikasi: <span class="mono" id="mfa-rahasia">${esc(mf.enroll.secret)}</span></p>${kode}</section>`;
+  if(mf.tahap==="kode")return `<section class="card">${kepala}<p class="small muted">Menu pemilik (Nota, reset PIN, Staf) butuh kode dari aplikasi autentikator.</p>${kode}</section>`;
+  if(mf.tahap==="belum")return `<section class="card">${kepala}<p class="small muted">Menu pemilik (Nota, reset PIN, Staf) wajib memakai verifikasi 2 langkah. Pasang sekali saja.</p>${pesan}
+    <button type="button" class="btn" id="mfa-daftar"${mf.sibuk?" disabled":""}>Pasang verifikasi 2 langkah</button></section>`;
+  return `<section class="card">${kepala}<p class="small muted">${mf.tahap==="memuat"?"Memeriksa...":"Belum bisa memeriksa verifikasi."}</p>${mf.tahap?"":pesan+`<button type="button" class="btn" id="mfa-ulang">Coba lagi</button>`}</section>`}
+function bindMfa(){const k=$("mfa-kode");
+  if(k){k.oninput=()=>{mf.kode=k.value.replace(/\D/g,"").slice(0,6);k.value=mf.kode;$("mfa-kirim").disabled=mf.kode.length!==6||mf.sibuk};k.focus()}
+  const b=$("mfa-kirim");if(b)b.onclick=kirimKode;
+  const d=$("mfa-daftar");if(d)d.onclick=mulaiDaftar;
+  const u=$("mfa-ulang");if(u)u.onclick=()=>{mf.tahap=null;mf.pesan="";muatMfa()}}
 
 /* ---------- Nota ---------- */
-let recent=null;
-async function vNota(){recent=recent||await q(sb.from("kk_receipts").select("nota,total,created_at,claimed_at").order("created_at",{ascending:false}).limit(60));
-  return head()+`<section class="card"><h2>Daftarkan nota</h2><p class="small muted">Setelah pelanggan bayar di ESB, ketik nomor nota dan total persis seperti di struk. Pelanggan memasukkan nomor & total yang sama di HP-nya.</p>
+let recent=null,legacyOn=null;
+async function vNota(){if(legacyOn===null)legacyOn=(await q(sb.from("kk_settings").select("legacy_nota_claim").eq("id",1).maybeSingle())||{}).legacy_nota_claim!==false;
+  recent=recent||await q(sb.from("kk_receipts").select("nota,total,created_at,claimed_at").order("created_at",{ascending:false}).limit(60));
+  return head()+`<section class="card"><h2>Klaim nomor nota lama (ESB)</h2><p class="small muted">Bila menyala, pelanggan masih bisa memasukkan nomor nota ESB + total di Kolam Koi. Matikan bila semua nota sudah lewat kasir baru (kode klaim).</p>
+  <label class="row" for="lg" style="justify-content:flex-start;gap:10px"><input id="lg" type="checkbox"${legacyOn?" checked":""}><span>Klaim nomor nota lama (ESB)</span></label></section>
+  <section class="card"><h2>Daftarkan nota</h2><p class="small muted">Setelah pelanggan bayar di ESB, ketik nomor nota dan total persis seperti di struk. Pelanggan memasukkan nomor & total yang sama di HP-nya.</p>
   <form id="rf" style="display:grid;gap:12px"><label for="rn">Nomor nota<input id="rn" class="txt" autocomplete="off" autocapitalize="characters" placeholder="POS-1123-0310"></label>
   <label for="rt">Total belanja (Rp)<input id="rt" inputmode="numeric" autocomplete="off" placeholder="0"></label>
   <p class="small muted" id="ri">&nbsp;</p><button type="submit" class="btn" id="rb">Daftarkan</button></form></section>
@@ -40,6 +79,9 @@ function parseCSV(txt){const lines=txt.trim().split(/\r?\n/).filter(Boolean);if(
   if(iN<0||iT<0)return {err:"Kolom nomor nota atau total tidak ditemukan. Kolom yang terbaca: "+h.join(", ")};
   return {rows:lines.slice(1).map(l=>{const c=l.split(sep).map(x=>x.trim().replace(/^"|"$/g,""));return {nota:(c[iN]||"").toUpperCase(),total:num(String(c[iT]||"").replace(/[.,]00$/,""))}}).filter(r=>r.nota&&r.total>0)}}
 function bindNota(){const rn=$("rn"),rt=$("rt"),ri=$("ri");rn.focus();
+  $("lg").onchange=async e=>{const on=e.target.checked;e.target.disabled=true;
+    try{await rpc("kk_set_legacy_claim",{p_on:on});legacyOn=on;toast(on?"Klaim nomor nota lama dinyalakan.":"Klaim nomor nota lama dimatikan.")}
+    catch(err){e.target.checked=!on;toast(errMsg(err))}finally{e.target.disabled=false}};
   rt.oninput=()=>{const t=num(rt.value);rt.value=t?t.toLocaleString("id-ID"):"";ri.textContent=t?(pullsFor(t)?`Pelanggan akan dapat ${pullsFor(t)} tarikan`:`Di bawah ${rp(tiers[tiers.length-1][0])}: tidak dapat tarikan`):" "};
   $("rf").onsubmit=async e=>{e.preventDefault();if(busy)return;const n=rn.value.trim().toUpperCase(),t=num(rt.value);if(!n){rn.focus();return toast("Isi nomor nota.")}if(!t){rt.focus();return toast("Isi total belanja.")}
     busy=true;$("rb").disabled=true;try{await rpc("kk_add_receipt",{p_nota:n,p_total:t});toast(`Terdaftar: ${n} · ${rp(t)}`);recent=null;await refresh()}catch(err){toast(errMsg(err))}finally{busy=false;render()}};
@@ -63,19 +105,23 @@ let mem=null;
 function normPhone(v){let d=String(v||"").replace(/\D/g,"");if(d.startsWith("0"))d="62"+d.slice(1);else if(d.startsWith("8"))d="62"+d;return /^62\d{8,13}$/.test(d)?d:null}
 function vMember(){return head()+`<section class="card"><h2>Cari member</h2><form id="mf" style="display:grid;gap:12px"><label for="mp">Nomor HP<input id="mp" class="txt" inputmode="tel" placeholder="0812..." value="${esc(mem&&hp(mem.phone)||"")}"></label><button type="submit" class="btn">Cari</button></form>
   ${mem===false?`<p class="err small">Nomor itu belum terdaftar sebagai member.</p>`:mem?`<div class="list"><div class="row"><span class="muted small">Nama</span><b>${esc(mem.nickname)}</b></div><div class="row"><span class="muted small">Transaksi</span><b>${mem.trx} · ${rp(mem.spent)}</b></div><div class="row"><span class="muted small">Saldo poin</span><b>${mem.bank}</b></div><div class="row"><span class="muted small">Daftar</span><b>${jam(mem.created_at)}</b></div></div>
-   ${owner()?`<form id="pf" style="display:grid;gap:10px;margin-top:6px"><label for="np">PIN baru (6 angka) · beri tahu pelanggan lewat WA<input id="np" class="txt" inputmode="numeric" maxlength="6" placeholder="••••••"></label><button type="submit" class="btn ghost">Reset PIN</button></form>`:`<p class="small muted">Reset PIN hanya bisa dilakukan pemilik.</p>`}`:""}</section>`}
+   ${owner()&&mfaOk()?`<form id="pf" style="display:grid;gap:10px;margin-top:6px"><label for="np">PIN baru (6 angka) · beri tahu pelanggan lewat WA<input id="np" class="txt" inputmode="numeric" maxlength="6" placeholder="••••••"></label><button type="submit" class="btn ghost">Reset PIN</button></form>`:`<p class="small muted">${owner()?"Reset PIN butuh verifikasi 2 langkah (lihat bagian atas halaman).":"Reset PIN hanya bisa dilakukan pemilik."}</p>`}`:""}</section>`}
 function bindMember(){$("mf").onsubmit=async e=>{e.preventDefault();const p=normPhone($("mp").value);if(!p)return toast("Nomor HP belum benar.");try{const r=await q(sb.from("kk_members").select("*").eq("phone",p).maybeSingle());mem=r||false}catch(err){toast(errMsg(err))}render()};
   const pf=$("pf");if(pf)pf.onsubmit=async e=>{e.preventDefault();const pin=$("np").value.trim();if(!/^\d{6}$/.test(pin))return toast("PIN harus 6 angka.");try{await rpc("kk_reset_pin",{p_phone:mem.phone,p_pin:pin});toast("PIN direset. Kirim PIN baru ke pelanggan lewat WA.");$("np").value=""}catch(err){toast(errMsg(err))}}}
 
 /* ---------- Staf (pemilik) ---------- */
 let staff=null;
 async function vStaf(){staff=staff||await q(sb.from("kk_staff").select("user_id,role,name"));
+  if(!mfaOk())return head()+`<section class="card"><h2>Staf</h2><p class="small muted">Mengatur staf butuh verifikasi 2 langkah (lihat bagian atas halaman).</p></section>`;
   return head()+`<section class="card"><h2>Tambah kasir</h2><p class="small muted">Minta kasir membuka halaman ini, pilih <b>Daftar akun staf</b> dengan emailnya sendiri. Setelah itu ketik emailnya di sini.</p>
   <form id="sf" style="display:grid;gap:12px"><label for="se">Email kasir<input id="se" class="txt" style="text-transform:none" type="email" autocomplete="off"></label><label for="sn">Nama<input id="sn" class="txt" style="text-transform:none" autocomplete="off"></label>
+  <label for="sp">Nomor HP (WhatsApp)<input id="sp" class="txt" inputmode="tel" autocomplete="off" placeholder="0812..."></label>
   <label for="sr">Peran<select id="sr"><option value="kasir">Kasir (daftar nota, voucher)</option><option value="pemilik">Pemilik (semua, termasuk reset PIN)</option></select></label><button type="submit" class="btn">Simpan</button></form></section>
   <section class="card"><h2>Staf (${staff.length})</h2><div class="list">${staff.map(s=>`<div class="row"><div><b>${esc(s.name||"(tanpa nama)")}</b><div class="small muted">${s.role}${s.user_id===user.id?" · kamu":""}</div></div></div>`).join("")}</div>
   <form id="rmf" style="display:grid;gap:10px;margin-top:6px"><label for="re">Hapus akses staf (email)<input id="re" class="txt" style="text-transform:none" type="email" autocomplete="off"></label><button type="submit" class="btn ghost">Hapus akses</button></form></section>`}
-function bindStaf(){$("sf").onsubmit=async e=>{e.preventDefault();try{await rpc("kk_set_staff",{p_email:$("se").value,p_role:$("sr").value,p_name:$("sn").value});toast("Staf disimpan.");staff=null;render()}catch(err){toast(errMsg(err))}};
+function bindStaf(){if(!mfaOk())return;
+  $("sf").onsubmit=async e=>{e.preventDefault();const ph=$("sp").value.trim(),p=ph?normPhone(ph):"";if(ph&&!p)return toast("Nomor HP belum benar. Contoh: 0812 3456 7890");
+    try{await rpc("kk_set_staff",{p_email:$("se").value,p_role:$("sr").value,p_name:$("sn").value,p_phone:p||null});toast("Staf disimpan.");staff=null;render()}catch(err){toast(errMsg(err))}};
   $("rmf").onsubmit=async e=>{e.preventDefault();try{await rpc("kk_set_staff",{p_email:$("re").value,p_role:null});toast("Akses dihapus.");staff=null;render()}catch(err){toast(errMsg(err))}}}
 
 /* ---------- Masuk ---------- */
@@ -95,12 +141,13 @@ function bindAuth(){document.querySelectorAll("[data-m]").forEach(b=>b.onclick=(
 async function refresh(){sum=await rpc("kk_admin_summary")}
 async function start(){const {data}=await sb.auth.getSession();user=data.session&&data.session.user;sum=null;
   if(user){try{await refresh()}catch(e){sum=null;$("app").innerHTML=`<div class="head"><h1>Admin Kolam Koi</h1></div><section class="card"><h2>Belum jadi staf</h2><p class="muted">Akun <b>${esc(user.email)}</b> sudah masuk, tapi belum ditambahkan sebagai kasir. Minta pemilik menambahkan emailmu di menu Staf.</p><button class="btn ghost" id="out2">Keluar</button></section>`;$("out2").onclick=logout;nav();return}}
-  render()}
-async function logout(){await sb.auth.signOut().catch(()=>{});user=null;sum=null;recent=openV=staff=null;vc=mem=null;render()}
+  if(sum)tab=tabs()[0][0];render()}
+async function logout(){await sb.auth.signOut().catch(()=>{});user=null;sum=null;recent=openV=staff=null;vc=mem=null;legacyOn=null;mf=mf0();render()}
 async function render(){nav();if(!sb){$("app").innerHTML=`<section class="card"><h2>Belum disambungkan</h2><p class="muted">Isi <code>kolam/config.js</code> dengan Project URL dan kunci publishable Supabase.</p></section>`;return}
   if(!user||!sum){$("app").innerHTML=vAuth();bindAuth();return}
-  try{const V={nota:[vNota,bindNota],voucher:[vVoucher,bindVoucher],member:[vMember,bindMember],staf:[vStaf,bindStaf]}[tab]||[vNota,bindNota];
-    $("app").innerHTML=await V[0]();V[1]();$("out").onclick=logout}catch(e){toast(errMsg(e))}}
+  try{const V={nota:[vNota,bindNota],voucher:[vVoucher,bindVoucher],member:[vMember,bindMember],staf:[vStaf,bindStaf]}[tab]||[vVoucher,bindVoucher];
+    const perluMfa=owner()&&!mfaOk();if(perluMfa&&!mf.tahap)muatMfa();
+    $("app").innerHTML=await V[0]();V[1]();if(perluMfa)bindMfa();$("out").onclick=logout}catch(e){toast(errMsg(e))}}
 async function boot(){if(!CFG.supabaseUrl||!CFG.supabaseKey||!window.supabase){render();return}
   sb=window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseKey,{auth:{persistSession:true,autoRefreshToken:true,storageKey:"kolamkoi-admin-auth"}});
   try{const t=await q(sb.from("kk_tiers").select("*").order("min_total",{ascending:false}));if(t.length)tiers=t.map(x=>[x.min_total,x.pulls])}catch(e){}

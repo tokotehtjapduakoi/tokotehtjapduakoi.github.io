@@ -102,6 +102,19 @@ async function auth(req, res, url) {
     }
     return kirim(res, 200, sesi(u, req));
   }
+  if (rute === "/signup" && req.method === "POST") { // daftar dengan email + sandi; trigger kk_on_signup membuat kk_members
+    const b = json(await bacaBody(req));
+    const email = String(b.email || "").toLowerCase();
+    if (await ambilUser("email = $1", [email])) return kirim(res, 422, { code: 422, error_code: "user_already_exists", msg: "User already registered" });
+    try {
+      const { rows: [u] } = await pool.query(
+        `insert into auth.users(email, raw_user_meta_data, encrypted_password) values ($1, $2::jsonb, extensions.crypt($3, extensions.gen_salt('bf')))
+         returning id, email, raw_user_meta_data, created_at`, [email, JSON.stringify(b.data || {}), String(b.password || "")]);
+      return kirim(res, 200, sesi(u, req));
+    } catch (e) {
+      return galatPg(res, e);
+    }
+  }
   const klaim = klaimDari(req);
   if (rute === "/user" && req.method === "GET") {
     const u = klaim.sub && (await ambilUser("id = $1", [klaim.sub]));
@@ -142,6 +155,39 @@ async function rpc(req, res, fn) {
       return setTimeout(() => res.socket.destroy(), 50);
     }
     return kirim(res, 200, isi);
+  } catch (e) {
+    return galatPg(res, e);
+  }
+}
+
+// ---------- Tabel (PostgREST mini: hanya GET) ----------
+// Cukup untuk halaman Kolam Koi: select kolom (embed dibuang), eq./is.null, order, limit, dan Accept object (maybeSingle).
+// Jalan sebagai role pemanggil, jadi grant + RLS berlaku seperti di Supabase.
+async function tabel(req, res, url, nama) {
+  const sel = (url.searchParams.get("select") || "*").split(",").map((x) => x.trim()).filter((x) => x && !x.includes("(") && !x.includes(")"));
+  if (!NAMA.test(nama) || !sel.every((x) => x === "*" || NAMA.test(x))) return kirim(res, 400, { message: "kueri tidak didukung" });
+  const nilai = [], where = [];
+  for (const [k, v] of url.searchParams) {
+    if (["select", "order", "limit", "offset"].includes(k)) continue;
+    if (!NAMA.test(k)) return kirim(res, 400, { message: "kolom tidak sah" });
+    if (v === "is.null") where.push(`t."${k}" is null`);
+    else if (v.startsWith("eq.")) { nilai.push(v.slice(3)); where.push(`t."${k}"::text = $${nilai.length}`); }
+    else return kirim(res, 400, { message: "filter tidak didukung di server tiruan: " + k });
+  }
+  const order = (url.searchParams.get("order") || "").split(",").filter(Boolean).map((o) => {
+    const [kol, arah = "asc"] = o.split(".");
+    if (!NAMA.test(kol) || !/^(asc|desc)$/.test(arah)) throw new Error("order tidak sah");
+    return `t."${kol}" ${arah}`;
+  });
+  const batas = url.searchParams.get("limit") ? ` limit ${Number(url.searchParams.get("limit")) | 0}` : "";
+  const kolom = sel.includes("*") || !sel.length ? "to_jsonb(t)" : `jsonb_build_object(${sel.map((x) => `'${x}', t."${x}"`).join(", ")})`;
+  try {
+    const rows = await sebagai(klaimDari(req), async (c) =>
+      (await c.query(`select ${kolom} as v from public."${nama}" t${where.length ? " where " + where.join(" and ") : ""}${order.length ? " order by " + order.join(", ") : ""}${batas}`, nilai)).rows.map((r) => r.v));
+    if (/vnd\.pgrst\.object/.test(req.headers.accept || "")) {
+      return rows.length === 1 ? kirim(res, 200, rows[0]) : kirim(res, 406, { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" });
+    }
+    return kirim(res, 200, rows);
   } catch (e) {
     return galatPg(res, e);
   }
@@ -258,6 +304,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith("/auth/v1/")) return await auth(req, res, url);
     const m = url.pathname.match(/^\/rest\/v1\/rpc\/([^/]+)$/);
     if (m && req.method === "POST") return await rpc(req, res, m[1]);
+    const t = url.pathname.match(/^\/rest\/v1\/([^/]+)$/);
+    if (t && req.method === "GET") return await tabel(req, res, url, t[1]);
     if (url.pathname.startsWith("/storage/v1/object/")) return await storage(req, res, url);
     if (api) return kirim(res, 404, { message: "tidak ada di server tiruan" });
     if (req.method === "GET" || req.method === "HEAD") return statis(req, res, url);

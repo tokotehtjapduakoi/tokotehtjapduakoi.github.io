@@ -3,11 +3,12 @@
    - kolam/vendor/* dan font: dari cache dulu (nama berkas sudah berversi), jaringan hanya bila belum ada.
    - Lainnya (Supabase *.supabase.co, API di luar folder kasir/): tidak disentuh, selalu lewat jaringan.
    Ganti CACHE (kasir-v2, ...) bila daftar INTI berubah atau cache lama perlu dibuang. */
-const CACHE="kasir-v2";
-const INTI=["./","kasir.css","config.js","kode.js","foto.js","antrean.js","kasir.js","pemilik.js","manifest.webmanifest","ikon.svg",
+const CACHE="kasir-v3";
+const INTI=["./","kasir.css","config.js","kode.js","foto.js","antrean.js","kasir.js","../kolam/mfa.js","pemilik.js","manifest.webmanifest","ikon.svg",
   "../kolam/vendor/supabase-2.45.4.js","../kolam/vendor/qrcode-generator-1.4.4.js","../favicon.ico"];
 const LINGKUP=new URL("./",self.registration.scope);
 const VENDOR=new URL("../kolam/vendor/",LINGKUP).pathname;
+const MFA=new URL("../kolam/mfa.js",LINGKUP).pathname;
 const FAVICON=new URL("../favicon.ico",LINGKUP).pathname;
 const FONT=/^https:\/\/fonts\.(googleapis|gstatic)\.com$/;
 
@@ -20,6 +21,7 @@ self.addEventListener("activate",e=>{e.waitUntil(caches.keys()
 function jenis(url){
   if(url.origin===self.location.origin){
     if(url.pathname.startsWith(VENDOR)||url.pathname===FAVICON)return "tetap";
+    if(url.pathname===MFA)return "segar";
     if(url.pathname.startsWith(LINGKUP.pathname)&&!url.pathname.endsWith("/sw.js"))return "segar";
     return null}
   return FONT.test(url.origin)?"tetap":null}
