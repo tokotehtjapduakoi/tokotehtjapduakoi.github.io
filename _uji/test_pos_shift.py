@@ -90,7 +90,9 @@ def test_serah_terima(db, laci):
     laci.tutup(laci.a, 130000, True)
     me = json.loads(db.sql("select pos_me('dev1')", sebagai=laci.b)[0][0])
     assert me["shift"] is None
-    assert me["handover_waiting"] == {"shift_id": 1, "cashier_name": "a@x.id", "cash_counted": 130000}
+    assert me["handover_waiting"] == {"shift_id": 1, "cashier_name": "a@x.id"}  # hitungan buta untuk kasir
+    own = json.loads(db.sql("select pos_me('dev1')", sebagai=laci.pemilik)[0][0])
+    assert own["handover_waiting"] == {"shift_id": 1, "cashier_name": "a@x.id", "cash_counted": 130000}
     r = laci.terima(laci.b, 125000)
     assert r["selisih"] == -5000 and r["shift"]["cash_start"] == 125000
     assert db.sql("select cashier = '%s', cash_start, received_from from pos_shifts where closed_at is null"
@@ -173,3 +175,47 @@ def test_validasi_dan_perangkat(db, laci):
     # fungsi internal tidak bisa dipanggil klien
     for q in ("select pos_shift_expected(1)", "select pos__photo_ok('x')", "select pos__shift_out(1)"):
         ditolak(db, q, "permission denied", laci.a)
+
+
+def checkout_payload(laci, kasir, client_at, offline, foto):
+    import uuid
+    nid = str(uuid.uuid4())
+    return {"id": nid, "device": "dev1", "client_at": client_at, "offline": offline,
+            "lines": [{"variant_id": laci.vid, "qty": 2}], "discount_id": None, "voucher_code": None,
+            "method_id": laci.tunai, "total": 30000, "cash_received": 30000, "photo_path": foto,
+            "customer_phone": None, "code": "ABCDE23456"}
+
+
+def kirim(db, kasir, p):
+    return json.loads(db.sql(f"select pos_checkout($j${json.dumps(p)}$j$::jsonb)", sebagai=kasir)[0][0])
+
+
+def test_nota_offline_masuk_shift_yang_sudah_tutup(db, laci):
+    s = laci.buka(laci.a, 100000)
+    db.sql(f"update pos_shifts set opened_at = now() - interval '2 hours' where id = {s['id']}")
+    dulu = db.sql("select now() - interval '1 hour'")[0][0]
+    laci.tutup(laci.a, 100000, True)
+    laci.terima(laci.b, 100000)  # shift baru milik B; A tak punya shift terbuka
+    r = kirim(db, laci.a, checkout_payload(laci, laci.a, dulu, True, laci.foto(laci.a)))
+    assert db.sql(f"select shift_id from pos_notas where id='{r['id']}'") == [(str(s["id"]),)]
+    assert db.sql(f"select pos_shift_expected({s['id']})") == [("130000",)]
+    # client_at di luar shift mana pun milik A: ditolak
+    lama = db.sql("select now() - interval '3 hours'")[0][0]
+    with pytest.raises(SqlError, match="Tidak ada shift saat nota dibuat"):
+        kirim(db, laci.a, {**checkout_payload(laci, laci.a, lama, True, laci.foto(laci.a)), "code": "ABCDE23457"})
+    # online tanpa shift terbuka: tetap ditolak
+    with pytest.raises(SqlError, match="Buka shift dulu"):
+        kirim(db, laci.a, {**checkout_payload(laci, laci.a, db.sql("select now()")[0][0], False,
+                                               laci.foto(laci.a)), "code": "ABCDE23458"})
+
+
+def test_foto_tutup_shift_tak_bisa_dipakai_nota(db, laci):
+    laci.buka(laci.a, 0)
+    foto = laci.foto(laci.a)
+    laci.tutup(laci.a, 0, True, foto=foto)
+    laci.terima(laci.b, 0)
+    # kasir A membuka lagi nanti; foto tutup miliknya dipakai nota -> ditolak
+    laci.tutup(laci.b, 0, False)
+    laci.buka(laci.a, 0)
+    with pytest.raises(SqlError, match="Foto bukti sudah dipakai"):
+        kirim(db, laci.a, checkout_payload(laci, laci.a, db.sql("select now()")[0][0], False, foto))

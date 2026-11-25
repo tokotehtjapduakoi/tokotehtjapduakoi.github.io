@@ -375,8 +375,11 @@ begin
       'id', v_shift.id, 'opened_at', v_shift.opened_at, 'cash_start', v_shift.cash_start) end,
     'handover_waiting', case when v_wait.id is null then null else jsonb_build_object(
       'shift_id', v_wait.id,
-      'cashier_name', (select name from kk_staff where user_id = v_wait.cashier),
-      'cash_counted', v_wait.cash_counted) end);
+      'cashier_name', (select name from kk_staff where user_id = v_wait.cashier))
+      -- hitungan penutup hanya terlihat pemilik; kasir penerima menghitung buta
+      || case when kk_is_owner() then jsonb_build_object('cash_counted', v_wait.cash_counted)
+              else '{}'::jsonb end
+      end);
 end $$;
 
 -- ---------- Shift & serah terima kas ----------
@@ -577,16 +580,26 @@ begin
     end if;
   end if;
 
-  select id into v_shift from pos_shifts where cashier = v_uid and closed_at is null
-   order by opened_at desc, id desc limit 1;
-  if v_shift is null then raise exception 'Buka shift dulu'; end if;
+  -- Online: shift terbuka kasir. Offline: shift kasir yang berlaku pada client_at (boleh sudah tertutup).
+  -- Baris shift dikunci key share supaya penutupan bersamaan tidak menyelinap.
+  if v_offline then
+    select id into v_shift from pos_shifts
+     where cashier = v_uid and opened_at <= v_client_at and (closed_at is null or closed_at >= v_client_at)
+     order by opened_at desc, id desc limit 1 for key share;
+    if v_shift is null then raise exception 'Tidak ada shift saat nota dibuat'; end if;
+  else
+    select id into v_shift from pos_shifts where cashier = v_uid and closed_at is null
+     order by opened_at desc, id desc limit 1 for key share;
+    if v_shift is null then raise exception 'Buka shift dulu'; end if;
+  end if;
 
   -- Foto bukti: wajib, di folder kasir sendiri, sudah terunggah, belum dipakai nota lain.
   if v_photo is null then raise exception 'Foto bukti wajib'; end if;
   if not pos__photo_ok(v_photo) then
     raise exception 'Foto bukti tidak ditemukan';
   end if;
-  if exists (select 1 from pos_notas where photo_path = v_photo) then
+  if exists (select 1 from pos_notas where photo_path = v_photo)
+     or exists (select 1 from pos_shifts where close_photo = v_photo) then
     raise exception 'Foto bukti sudah dipakai nota lain';
   end if;
 

@@ -30,6 +30,9 @@ class Toko:
         """Buka shift lewat pos_shift_open; shift yang masih terbuka ditutup dulu (satu laci)."""
         self.db.sql("update pos_shifts set closed_at = now(), handover = false where closed_at is null")
         self.db.sql("select pos_shift_open('dev1', 0)", sebagai=kasir)
+        # dibuka 5 hari lalu supaya nota offline berjam HP lampau jatuh di dalam shift
+        self.db.sql(f"update pos_shifts set opened_at = now() - interval '5 days' where cashier = '{kasir['sub']}' "
+                    "and closed_at is null")
 
     def foto(self, kasir, nama):
         self.db.sql(f"insert into storage.objects(bucket_id, name) values ('bukti', $n${nama}$n$)", sebagai=kasir)
