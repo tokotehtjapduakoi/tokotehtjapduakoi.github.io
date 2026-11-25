@@ -292,3 +292,18 @@ test("admin: baris kk_settings tidak ada = sakelar klaim lama mati", () => lingk
   assert.equal(await lg.isChecked(), false);
   await h.context.close();
 }));
+
+test("halaman salin SQL: kolam (bawaan) dan kasir (?f=kasir)", () => lingkungan(async ({ server, browser }) => {
+  const fs = await import("node:fs");
+  const akar = new URL("../../", import.meta.url);
+  const h = await bukaHalaman(browser, server);
+  for (const [jalur, berkas, nama] of [["/kolam/admin/sql.html", "kolam/setup.sql", "Kolam Koi"],
+                                       ["/kolam/admin/sql.html?f=kasir", "kasir/setup.sql", "Kasir Koi"]]) {
+    await buka(h, server, jalur);
+    await h.page.getByRole("button", { name: `Salin semua SQL ${nama}` }).waitFor();
+    assert.equal(await h.page.locator("#judul").innerText(), `Salin SQL ${nama}`);
+    assert.equal(await h.page.locator("#t").inputValue(), fs.readFileSync(new URL(berkas, akar), "utf8"));
+    assert.equal(await h.page.locator("nav a[aria-current]").innerText(), nama === "Kolam Koi" ? "1. Kolam Koi" : "2. Kasir Koi");
+  }
+  await h.context.close();
+}));
