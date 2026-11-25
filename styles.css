@@ -1,0 +1,400 @@
+/* Toko Teh Tjap Dua Koi — gaya halaman */
+:root {
+  --hijau: #0E4D32;
+  --hijau-gelap: #08301F;
+  --marun: #7A1F2B;
+  --merah: #B3262E;
+  --emas: #C9A24B;
+  --oranye: #D9822B;
+  --krem: #F6EFDF;
+  --hitam: #1F2A25;
+  --abu: #CFC8B8;
+
+  --f-judul: "Oswald", "Arial Narrow", Impact, sans-serif;
+  --f-tjap: "Cinzel", "Times New Roman", serif;
+  --f-skrip: "Kaushan Script", "Brush Script MT", cursive;
+  --f-teks: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --garis: 3px solid var(--hitam);
+  --bayang: 5px 5px 0 var(--hitam);
+  --radius: 18px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: var(--f-teks);
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--hitam);
+  background-color: var(--krem);
+  /* pola doodle tipis: koi, lampion, gelas teh, awan */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%230E4D32' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' opacity='.11'%3E%3Cg transform='translate(36 40) rotate(-12)'%3E%3Cpath d='M0 0C8-9 30-10 42-4C47-1 47 1 42 4C30 10 8 9 0 0Z'/%3E%3Cpath d='M0 0C-7-8-15-11-21-7C-16-3-16 3-21 7C-15 11-7 8 0 0Z'/%3E%3Cpath d='M16-6C22-9 28-8 30-4'/%3E%3Ccircle cx='39' cy='-1.5' r='1'/%3E%3C/g%3E%3Cg transform='translate(150 18)'%3E%3Cpath d='M8 0v7M2 7h12M2 33h12M8 33v9M5 36v5M11 36v5'/%3E%3Cellipse cx='8' cy='20' rx='10' ry='13'/%3E%3Cpath d='M8 7v26M3 9q-4 11 0 22M13 9q4 11 0 22'/%3E%3C/g%3E%3Cg transform='translate(70 112)'%3E%3Cpath d='M0 0h22l-2.6 28a2 2 0 0 1-2 2H4.6a2 2 0 0 1-2-2Z'/%3E%3Cpath d='M1 9h20M13 0l3.5-9M5 16h3M6 21h3'/%3E%3C/g%3E%3Cg transform='translate(140 150)'%3E%3Cpath d='M0 12h36a7 7 0 0 0-7-9a9 9 0 0 0-17 1a6 6 0 0 0-12 8'/%3E%3C/g%3E%3Cg transform='translate(10 160)'%3E%3Cpath d='M0 0q6-6 12 0t12 0t12 0'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  -webkit-font-smoothing: antialiased;
+}
+img, svg { display: block; max-width: 100%; }
+a { color: inherit; }
+h1, h2, h3 { margin: 0; }
+p { margin: 0; }
+
+:focus-visible {
+  outline: 3px solid var(--emas);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.skip {
+  position: absolute; left: 12px; top: -60px; z-index: 10;
+  background: var(--hitam); color: var(--krem);
+  padding: 10px 14px; border-radius: 10px; text-decoration: none; font-weight: 600;
+}
+.skip:focus { top: 12px; }
+
+/* ============ HERO ============ */
+.hero {
+  background: var(--hijau);
+  border-bottom: var(--garis);
+  overflow: hidden;
+}
+.ruko {
+  width: 100%;
+  height: clamp(200px, 30vw, 290px);
+}
+.lt {
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+  animation: goyang 4.2s ease-in-out infinite;
+  animation-delay: var(--d, 0s);
+}
+@keyframes goyang {
+  0%, 100% { transform: rotate(-4deg); }
+  50% { transform: rotate(4deg); }
+}
+
+/* ============ KOLOM UTAMA ============ */
+.wrap {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+}
+
+/* ============ IDENTITAS ============ */
+.brand { text-align: center; }
+.logo-ring {
+  width: 152px; height: 152px;
+  margin: -78px auto 0;
+  position: relative;
+  border-radius: 50%;
+  background: var(--krem);
+  padding: 5px;
+  border: var(--garis);
+  box-shadow: var(--bayang);
+}
+.logo-ring img { width: 100%; height: 100%; border-radius: 50%; }
+
+.nama { margin-top: 18px; line-height: 1; }
+.nama__toko {
+  display: block;
+  font-family: var(--f-judul);
+  font-weight: 700;
+  font-size: clamp(2.5rem, 11vw, 3.25rem);
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--merah);
+  text-shadow: 2px 2px 0 var(--emas);
+}
+.nama__tjap {
+  display: block;
+  margin-top: 8px;
+  font-family: var(--f-tjap);
+  font-weight: 700;
+  font-size: clamp(1.2rem, 5.4vw, 1.55rem);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--hijau);
+}
+.slogan {
+  margin-top: 12px;
+  font-family: var(--f-skrip);
+  font-size: clamp(1.45rem, 6.5vw, 1.8rem);
+  color: var(--marun);
+  line-height: 1.25;
+}
+.sapa {
+  margin: 16px auto 0;
+  max-width: 34em;
+  font-size: .98rem;
+  color: #33413A;
+}
+.sapa strong { color: var(--hijau); }
+.sapa__yuk {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--f-skrip);
+  font-size: 1.25rem;
+  color: var(--oranye);
+}
+
+/* ============ KARTU ALA LYNK ============ */
+.links {
+  display: grid;
+  gap: 16px;
+  margin-top: 26px;
+}
+.card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  padding: 12px 14px;
+  border: var(--garis);
+  border-radius: var(--radius);
+  box-shadow: var(--bayang);
+  text-decoration: none;
+  color: var(--hitam);
+  background: #fff;
+  transition: transform .12s ease, box-shadow .12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+a.card:hover { transform: translate(-1px, -1px); box-shadow: 6px 6px 0 var(--hitam); }
+a.card:active { transform: translate(4px, 4px); box-shadow: 1px 1px 0 var(--hitam); }
+
+.card__ikon {
+  flex: none;
+  display: grid; place-items: center;
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  border: 2.5px solid var(--hitam);
+  background: var(--krem);
+  color: var(--hitam);
+}
+.card__ikon svg, .card__panah svg, .tombol svg, .kaki__link svg, .cabang svg {
+  width: 24px; height: 24px;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.card__ikon .isi { fill: currentColor; }
+.card__teks { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.card__judul {
+  font-family: var(--f-judul);
+  font-weight: 600;
+  font-size: 1.22rem;
+  letter-spacing: .02em;
+  line-height: 1.2;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+}
+.card__sub { font-size: .9rem; line-height: 1.35; opacity: .9; overflow-wrap: anywhere; }
+.card__panah { flex: none; }
+
+.card--oranye { background: var(--oranye); }
+.card--marun  { background: var(--marun); color: var(--krem); }
+.card--marun .card__ikon { background: var(--krem); color: var(--marun); }
+.card--emas   { background: var(--emas); }
+.card--krem   { background: var(--krem); }
+.card--krem .card__ikon { background: var(--hijau); color: var(--krem); }
+
+.label {
+  display: inline-block;
+  font-family: var(--f-teks);
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: 2px solid var(--hitam);
+}
+.label--hijau { background: var(--hijau); color: var(--krem); }
+.label--abu   { background: var(--krem); color: #4A554F; }
+
+.antar { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.card--antar { min-height: 64px; padding: 10px 12px; gap: 10px; background: #fff; }
+.card--antar .card__ikon { width: 38px; height: 38px; }
+.card--antar .card__ikon svg { width: 20px; height: 20px; }
+.card--antar .card__judul { font-size: 1.05rem; }
+.card--antar .card__teks { align-items: flex-start; gap: 4px; }
+.card--antar.is-segera {
+  background: #EFE8D8;
+  color: #4A554F;
+  border-style: dashed;
+  box-shadow: 3px 3px 0 rgba(31, 42, 37, .35);
+  cursor: not-allowed;
+}
+.card--antar.is-segera .card__ikon { border-style: dashed; }
+
+/* ============ KOLAM KOI ============ */
+.kolam { margin: 34px -16px 8px; overflow: hidden; }
+.kolam svg { width: 100%; height: 80px; }
+.koi { animation: renang 16s linear infinite; }
+.koi--2 { animation-duration: 21s; animation-delay: -9s; }
+@keyframes renang {
+  from { transform: translateX(-60px); }
+  to   { transform: translateX(460px); }
+}
+
+/* ============ PANEL ============ */
+.panel {
+  margin-top: 26px;
+  padding: 22px 18px;
+  background: #fff;
+  border: var(--garis);
+  border-radius: var(--radius);
+  box-shadow: var(--bayang);
+}
+.panel h2 {
+  font-family: var(--f-judul);
+  font-weight: 700;
+  font-size: clamp(1.7rem, 7.5vw, 2rem);
+  text-transform: uppercase;
+  letter-spacing: .02em;
+  line-height: 1.1;
+  color: var(--hijau);
+  margin-bottom: 14px;
+}
+.kecil-atas {
+  font-size: .78rem;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--oranye);
+  margin-bottom: 4px;
+}
+.panel--marun { background: var(--marun); color: var(--krem); }
+.panel--marun h2 { color: var(--krem); }
+.panel--marun .kecil-atas { color: var(--emas); }
+.panel--polos { background: var(--krem); }
+
+.langkah { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 14px; }
+.langkah li { display: flex; gap: 14px; align-items: flex-start; }
+.langkah__no {
+  flex: none;
+  display: grid; place-items: center;
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  border: 2.5px solid var(--hitam);
+  background: var(--emas);
+  font-family: var(--f-judul);
+  font-weight: 700;
+  font-size: 1.3rem;
+  box-shadow: 3px 3px 0 var(--hitam);
+}
+.langkah h3 { font-size: 1rem; font-weight: 700; line-height: 1.3; margin-top: 2px; }
+.langkah p { font-size: .93rem; color: #46524C; margin-top: 2px; }
+
+.tombol {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 16px;
+  border: var(--garis);
+  border-radius: 14px;
+  box-shadow: 4px 4px 0 var(--hitam);
+  font-family: var(--f-judul);
+  font-weight: 600;
+  font-size: 1.12rem;
+  letter-spacing: .03em;
+  text-decoration: none;
+  text-align: center;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.tombol:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 var(--hitam); }
+.tombol--oranye { background: var(--oranye); color: var(--hitam); }
+.tombol--krem { background: var(--krem); color: var(--marun); }
+.catatan { margin-top: 12px; font-size: .85rem; color: #56625C; text-align: center; }
+
+.panel--marun > p:not(.kecil-atas) { font-size: .98rem; }
+.chip { list-style: none; padding: 0; margin: 16px 0 20px; display: flex; flex-wrap: wrap; gap: 8px; }
+.chip li {
+  padding: 6px 12px;
+  border: 2px solid var(--emas);
+  border-radius: 999px;
+  font-size: .88rem;
+  font-weight: 600;
+  color: var(--krem);
+}
+
+/* ============ CABANG ============ */
+.cabang { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.cabang__item {
+  background: #fff;
+  border: 2.5px solid var(--hitam);
+  border-radius: 14px;
+  padding: 14px;
+}
+.cabang__atas { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.cabang h3 { font-family: var(--f-judul); font-weight: 600; font-size: 1.25rem; line-height: 1.2; }
+.cabang__baris { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; font-size: .93rem; color: #3E4A44; }
+.cabang__baris svg { flex: none; width: 18px; height: 18px; margin-top: 2px; color: var(--hijau); }
+.status {
+  flex: none;
+  font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 999px; border: 2px solid var(--hitam);
+}
+.status--buka { background: var(--hijau); color: var(--krem); }
+.status--segera { background: var(--emas); color: var(--hitam); }
+.cabang__maps {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-top: 12px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 2.5px solid var(--hitam);
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 var(--hitam);
+  background: var(--emas);
+  font-weight: 600; font-size: .93rem;
+  text-decoration: none;
+}
+.cabang__maps:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--hitam); }
+.cabang__maps svg { width: 18px; height: 18px; }
+
+/* ============ FOOTER ============ */
+.kaki {
+  background: var(--hijau);
+  color: var(--krem);
+  border-top: var(--garis);
+  padding: 30px 16px calc(30px + env(safe-area-inset-bottom));
+  text-align: center;
+}
+.kaki__isi { max-width: 520px; margin: 0 auto; }
+.kaki__nama {
+  font-family: var(--f-judul); font-weight: 700; font-size: 1.6rem;
+  text-transform: uppercase; letter-spacing: .03em; line-height: 1.2;
+}
+.kaki__nama span:first-child { color: #F2C9C0; }
+.kaki__tjap { font-family: var(--f-tjap); font-size: 1.1rem; letter-spacing: .12em; display: block; color: var(--krem); }
+.kaki__slogan { font-family: var(--f-skrip); font-size: 1.25rem; color: var(--emas); margin-top: 6px; }
+.kaki__link { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 8px; justify-items: center; }
+.kaki__link a {
+  display: inline-flex; align-items: center; gap: 10px;
+  min-height: 44px; padding: 6px 10px;
+  text-decoration: none; font-size: .95rem;
+}
+.kaki__link a:hover span { text-decoration: underline; }
+.kaki__link svg { color: var(--emas); }
+.kaki__kecil { margin-top: 18px; font-size: .8rem; opacity: .75; }
+
+/* ============ LAYAR LEBAR ============ */
+@media (min-width: 720px) {
+  .wrap { max-width: 560px; }
+  .logo-ring { width: 176px; height: 176px; margin-top: -92px; }
+  .panel { padding: 28px 26px; }
+}
+
+/* ============ TANPA ANIMASI ============ */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .koi--1 { transform: translateX(80px); }
+  .koi--2 { transform: translateX(250px); }
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
