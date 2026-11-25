@@ -87,6 +87,7 @@ alter table public.kk_receipts add column if not exists expires_at timestamptz;
 alter table public.kk_receipts add column if not exists voided_at timestamptz;
 alter table public.kk_receipts add column if not exists pos_nota_id uuid;
 alter table public.kk_receipts add column if not exists held boolean not null default false;
+create index if not exists kk_receipts_pos_nota on public.kk_receipts(pos_nota_id);
 
 -- Pengaturan (satu baris). legacy_nota_claim: klaim lama lewat nomor nota + total.
 create table if not exists public.kk_settings(
@@ -294,7 +295,8 @@ begin
   end if;
   if v_nota = '' or p_total is null then return jsonb_build_object('status', 'not_found'); end if;
   -- klaim lama dimatikan pemilik: tolak tanpa menambah percobaan gagal
-  if not (select legacy_nota_claim from kk_settings where id = 1) then
+  -- baris pengaturan hilang = mati (gagal tertutup)
+  if not coalesce((select legacy_nota_claim from kk_settings where id = 1), false) then
     return jsonb_build_object('status', 'not_found');
   end if;
 
@@ -484,13 +486,21 @@ begin
   return to_jsonb(v);
 end $$;
 
+-- Tandai voucher dipakai. Internal (tidak di-grant): dipakai kk_use_voucher dan pos_checkout,
+-- yang sudah mengecek peran pemanggil.
+create or replace function public.kk__use_voucher(p_code text, p_by uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update kk_exchanges set used_at = now(), used_by = p_by
+   where code = upper(trim(p_code)) and kind = 'hadiah' and used_at is null;
+  if not found then raise exception 'Voucher tidak ada atau sudah dipakai'; end if;
+end $$;
+
 create or replace function public.kk_use_voucher(p_code text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
   if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
-  update kk_exchanges set used_at = now(), used_by = auth.uid()
-   where code = upper(trim(p_code)) and kind = 'hadiah' and used_at is null;
-  if not found then raise exception 'Voucher tidak ada atau sudah dipakai'; end if;
+  perform kk__use_voucher(p_code, auth.uid());
 end $$;
 
 -- Reset PIN member yang lupa (khusus pemilik)
@@ -551,7 +561,14 @@ begin
 end $$;
 
 -- ---------- Hak akses fungsi ----------
-revoke execute on all functions in schema public from public, anon, authenticated;
+-- Hanya fungsi kk_* yang dicabut lalu diberi satu per satu, supaya menjalankan ulang
+-- file ini tidak mencabut hak fungsi pos_* dari kasir/setup.sql.
+do $$ declare f record; begin
+  for f in select p.oid::regprocedure as sig from pg_proc p
+           where p.pronamespace = 'public'::regnamespace and p.proname like 'kk\_%' loop
+    execute format('revoke execute on function %s from public, anon, authenticated', f.sig);
+  end loop;
+end $$;
 grant execute on function public.kk_me(), public.kk_update_profile(text, boolean), public.kk_claim(text, integer),
   public.kk_exchange(jsonb, text), public.kk_add_receipt(text, integer), public.kk_add_receipts(jsonb),
   public.kk_delete_receipt(text), public.kk_check_voucher(text), public.kk_use_voucher(text),
@@ -559,7 +576,7 @@ grant execute on function public.kk_me(), public.kk_update_profile(text, boolean
   public.kk_is_staff(), public.kk_is_owner(), public.kk_owner_mfa(),
   public.kk_claim_code(text), public.kk_set_legacy_claim(boolean)
   to authenticated;
--- kk__draw sengaja tidak di-grant: hanya dipanggil dari kk_claim / kk_claim_code.
+-- kk__draw dan kk__use_voucher sengaja tidak di-grant (internal).
 grant execute on function public.kk_board(date) to anon, authenticated;
 
 -- ---------- Izin baca tabel ----------
@@ -569,5 +586,9 @@ grant execute on function public.kk_board(date) to anon, authenticated;
 grant usage on schema public to anon, authenticated;
 grant select on public.kk_cards, public.kk_tiers, public.kk_rewards, public.kk_skins to anon, authenticated;
 revoke all on public.kk_settings from anon, authenticated;
-grant select on public.kk_staff, public.kk_members, public.kk_receipts, public.kk_inventory,
+grant select on public.kk_staff, public.kk_members, public.kk_inventory,
   public.kk_collection, public.kk_pulls, public.kk_exchanges, public.kk_settings to authenticated;
+-- kk_receipts: semua kolom KECUALI code_hash (hash kode klaim tidak boleh terbaca dari klien).
+revoke all on public.kk_receipts from anon, authenticated;
+grant select (nota, total, created_by, created_at, claimed_by, claimed_at, bound_phone, expires_at,
+  voided_at, pos_nota_id, held) on public.kk_receipts to authenticated;
