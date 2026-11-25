@@ -64,7 +64,7 @@ def test_kolam_dijalankan_ulang_tidak_mencabut_pos(db):
     jalankan(db, "kolam/setup.sql")
     assert db.sql("select jsonb_typeof(pos_catalog())", sebagai=kasir) == [("object",)]
     assert db.sql("select jsonb_typeof(pos_my_notas())", sebagai=kasir) == [("array",)]
-    assert db.sql("select has_function_privilege('authenticated', 'public.kk__use_voucher(text, uuid)', 'execute')") \
+    assert db.sql("select has_function_privilege('authenticated', 'public.kk__use_voucher(text, uuid, text)', 'execute')") \
         == [("f",)]
 
 

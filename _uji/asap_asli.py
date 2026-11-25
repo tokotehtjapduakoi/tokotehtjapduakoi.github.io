@@ -298,7 +298,7 @@ def main():
         for nama, fn, args, tok in [
             ("kasir: kk__draw", "kk__draw", {"p_member": users.get("member") or users["kasir"], "p_receipt": nota_no}, tk),
             ("member: kk__draw", "kk__draw", {"p_member": users.get("member") or users["kasir"], "p_receipt": nota_no}, tm),
-            ("kasir: kk__use_voucher", "kk__use_voucher", {"p_code": "TK-XXXXX", "p_by": users["kasir"]}, tk),
+            ("kasir: kk__use_voucher", "kk__use_voucher", {"p_code": "TK-XXXXX", "p_by": users["kasir"], "p_nota": "UJI-1"}, tk),
             ("member: kk__give_bonus", "kk__give_bonus", {"p_member": users.get("member") or users["kasir"], "p_item": "uji"}, tm),
             ("member: kk__pulls", "kk__pulls", {"p_member": users.get("member") or users["kasir"], "p_n": 1, "p_nota": "UJI"}, tm),
             ("member: kk_give_bonus (nama lama)", "kk_give_bonus", {"p_member": users.get("member") or users["kasir"], "p_item": "uji"}, tm),

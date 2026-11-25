@@ -127,7 +127,7 @@ test("kasir: tab Nota selama masa transisi ESB, hilang setelah nota manual dimat
   await buka(h, server, "/kolam/admin/");
   await masuk(h.page, "ocha@uji.id");
   await h.page.locator("#tabs").getByRole("button", { name: "Nota" }).waitFor();
-  assert.deepEqual(await h.page.locator("#tabs button").allTextContents(), ["Nota", "Voucher", "Posting", "Member"]);
+  assert.deepEqual(await h.page.locator("#tabs button").allTextContents(), ["Nota", "Voucher", "Member"]);
   assert.equal(await h.page.getByRole("heading", { name: "Verifikasi 2 langkah" }).count(), 0);
   // sakelar hanya untuk pemilik
   assert.equal(await h.page.getByLabel("Klaim nomor nota lama (ESB)").count(), 0);
@@ -151,7 +151,7 @@ test("kasir: tab Nota selama masa transisi ESB, hilang setelah nota manual dimat
   await buka(h2, server, "/kolam/admin/");
   await masuk(h2.page, "ocha@uji.id");
   await h2.page.locator("#tabs").getByRole("button", { name: "Voucher" }).waitFor();
-  assert.deepEqual(await h2.page.locator("#tabs button").allTextContents(), ["Voucher", "Posting", "Member"]);
+  assert.deepEqual(await h2.page.locator("#tabs button").allTextContents(), ["Voucher", "Member"]);
   await h2.context.close();
 }));
 

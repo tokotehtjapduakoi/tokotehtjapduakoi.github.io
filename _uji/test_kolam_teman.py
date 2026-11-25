@@ -40,7 +40,8 @@ def test_hak_fungsi_teman_tarik(db):
     assert boleh(db, "anon", "public.kk_ref_check(text)")
     assert boleh(db, "authenticated", "public.kk_ref_check(text)")
     for sig in ("public.kk_use_ref(text)", "public.kk_pull_bonus()", "public.kk_posting_status(text)",
-                "public.kk_posting_bonus(text, text, text)"):
+                "public.kk_posting_bonus(text, text, text, text)", "public.kk_use_voucher(text, text)",
+                "public.kk_voucher_report(date)"):
         assert boleh(db, "authenticated", sig), sig
         assert not boleh(db, "anon", sig), sig
         assert not boleh(db, "public", sig), sig
@@ -53,16 +54,25 @@ def test_anon_hanya_dua_fungsi_kk(db):
     assert hasil == [("kk_board,kk_ref_check",)]
 
 
-def test_posting_khusus_staf_tanpa_2_langkah(db):
-    kasir = db.user("kasir@x.id", peran="kasir")  # aal1: tugas kasir, bukan fungsi pemilik
+def test_fungsi_pemilik_baru_wajib_2_langkah(db):
+    kasir = db.user("kasir@x.id", peran="kasir")
+    pemilik = db.user("pemilik@x.id", peran="pemilik")  # aal1
     m = db.member("6281200000001")
     for q in ("select kk_posting_status('6281200000001')",
-              "select kk_posting_bonus('6281200000001', 'esteh', '')"):
-        with pytest.raises(SqlError, match="Khusus kasir"):
-            db.sql(q, sebagai=m)
+              "select kk_posting_bonus('6281200000001', 'esteh', 'POS-1', '')",
+              "select kk_voucher_report(null)"):
+        for siapa in (m, kasir, pemilik):
+            with pytest.raises(SqlError, match="pemilik"):
+                db.sql(q, sebagai=siapa)
         with pytest.raises(SqlError, match="permission denied"):
             db.sql(q, sebagai={"role": "anon"})
-    assert j(db, "select kk_posting_status('6281200000001')", kasir)["today"] is False
+    assert j(db, "select kk_posting_status('6281200000001')", aal2(pemilik))["nota"] == []
+    assert j(db, "select kk_voucher_report(null)", aal2(pemilik))["dipakai"] == []
+
+
+def test_nama_fungsi_lama_dibuang(db):
+    for sig in ("kk_use_voucher(text)", "kk_posting_bonus(text, text, text)", "kk__use_voucher(text, uuid)"):
+        assert db.sql(f"select to_regprocedure('public.{sig}') is null") == [("t",)], sig
 
 
 # ---------- tabel baru ----------
@@ -145,40 +155,45 @@ def test_kode_ajak_terkunci_setelah_belanja(db):
         db.sql(f"select kk_use_ref('{kode}')", sebagai=teman)
 
 
-# ---------- bonus posting ----------
-def test_bonus_posting_butuh_belanja_hari_ini_yang_tidak_void(db):
-    kasir = siapkan(db)
+# ---------- bonus posting (pemilik + 2 langkah) ----------
+def test_bonus_posting_satu_nota_satu_bonus_dan_void_tidak_dihitung(db):
+    siapkan(db)
+    pemilik = aal2(db.user("pemilik@x.id", peran="pemilik"))
     m = db.member("6281200000001")
-    with pytest.raises(SqlError, match="belum punya nota belanja"):
-        db.sql("select kk_posting_bonus('6281200000001', 'esteh', '')", sebagai=kasir)
+    with pytest.raises(SqlError, match="bukan milik"):
+        db.sql("select kk_posting_bonus('6281200000001', 'esteh', 'POS-1', '')", sebagai=pemilik)
     db.sql(f"select kk_claim_code('{KODE}')", sebagai=m)
     db.sql("update kk_receipts set voided_at = now()")
-    assert j(db, "select kk_posting_status('6281200000001')", kasir)["belanja"] == 0
-    with pytest.raises(SqlError, match="belum punya nota belanja"):
-        db.sql("select kk_posting_bonus('6281200000001', 'esteh', '')", sebagai=kasir)
+    assert j(db, "select kk_posting_status('6281200000001')", pemilik)["nota"] == []
+    with pytest.raises(SqlError, match="dibatalkan"):
+        db.sql("select kk_posting_bonus('6281200000001', 'esteh', 'POS-1', '')", sebagai=pemilik)
     db.sql("update kk_receipts set voided_at = null")
-    r = j(db, "select kk_posting_bonus('6281200000001', 'esteh', 'https://instagram.com/p/x')", kasir)
-    assert r["code"].startswith("TK-")
-    with pytest.raises(SqlError, match="sudah klaim bonus posting"):
-        db.sql("select kk_posting_bonus('6281200000001', 'tarik', '')", sebagai=kasir)
+    assert [n["nota"] for n in j(db, "select kk_posting_status('6281200000001')", pemilik)["nota"]] == ["POS-1"]
+    r = j(db, "select kk_posting_bonus('6281200000001', 'esteh', 'pos-1', 'https://instagram.com/p/x')", pemilik)
+    assert r["code"].startswith("TK-") and r["nota"] == "POS-1"
+    assert db.sql("select nota, staff_id is not null from kk_posts") == [("POS-1", "t")]
+    db.sql("update kk_posts set day = day - 1")  # besok: nota yang sama tetap tidak bisa dipakai lagi
+    with pytest.raises(SqlError, match="sudah dipakai untuk bonus posting"):
+        db.sql("select kk_posting_bonus('6281200000001', 'tarik', 'POS-1', '')", sebagai=pemilik)
 
 
 def test_bonus_posting_bukan_untuk_nomor_staf_sendiri(db):
-    kasir = siapkan(db)
-    db.sql(f"update kk_staff set phone = '6281200000001' where user_id = '{kasir['sub']}'")
+    pemilik = db.user("pemilik@x.id", peran="pemilik")
+    db.sql(f"update kk_staff set phone = '6281200000001' where user_id = '{pemilik['sub']}'")
     m = db.member("6281200000001")
     db.sql("insert into kk_receipts(nota, total) values ('ESB-1', 30000)")
     db.sql("select kk_claim('ESB-1', 30000)", sebagai=m)
     with pytest.raises(SqlError, match="nomor sendiri"):
-        db.sql("select kk_posting_bonus('6281200000001', 'esteh', '')", sebagai=kasir)
+        db.sql("select kk_posting_bonus('6281200000001', 'esteh', 'ESB-1', '')", sebagai=aal2(pemilik))
     assert db.sql("select count(*) from kk_posts") == [("0",)]
 
 
 def test_tarikan_bonus_satu_kartu_lewat_kk__pulls(db):
-    kasir = siapkan(db)
+    siapkan(db)
+    pemilik = aal2(db.user("pemilik@x.id", peran="pemilik"))
     m = db.member("6281200000001")
     db.sql(f"select kk_claim_code('{KODE}')", sebagai=m)
-    db.sql("select kk_posting_bonus('6281200000001', 'tarik', '')", sebagai=kasir)
+    db.sql("select kk_posting_bonus('6281200000001', 'tarik', 'POS-1', '')", sebagai=pemilik)
     sebelum = int(db.sql("select pity_sr from kk_members")[0][0])
     r = j(db, "select kk_pull_bonus()", m)
     assert r["pulls"] == 1 and len(r["cards"]) == 1
@@ -190,18 +205,54 @@ def test_tarikan_bonus_satu_kartu_lewat_kk__pulls(db):
         db.sql("select kk_pull_bonus()", sebagai=m)
 
 
+# ---------- satu jalur voucher ----------
+def voucher_bonus(db, m):
+    return db.sql(f"select kk__give_bonus('{m['sub']}', 'Es teh gratis · uji')")[0][0]
+
+
+def test_voucher_manual_esb_butuh_nota_dan_masa_transisi(db):
+    kasir = db.user("kasir@x.id", peran="kasir")
+    pemilik = db.user("pemilik@x.id", peran="pemilik")
+    m = db.member("6281200000001")
+    v = voucher_bonus(db, m)
+    with pytest.raises(SqlError, match="Isi nomor nota"):
+        db.sql(f"select kk_use_voucher('{v}', '')", sebagai=kasir)
+    with pytest.raises(SqlError, match="Kasir Koi"):
+        db.sql(f"select kk_use_voucher('{v}', 'K261125-001')", sebagai=kasir)
+    with pytest.raises(SqlError, match="Khusus kasir"):
+        db.sql(f"select kk_use_voucher('{v}', 'ESB-9')", sebagai=m)
+    db.sql("update kk_settings set kasir_nota_manual = false")
+    for siapa in (kasir, pemilik):
+        with pytest.raises(SqlError, match="lewat Kasir Koi"):
+            db.sql(f"select kk_use_voucher('{v}', 'ESB-9')", sebagai=siapa)
+    r = j(db, f"select kk_use_voucher('{v.lower()}', 'esb-9')", aal2(pemilik))
+    assert r["nota"] == "ESB-9"
+    assert db.sql("select used_nota, used_by is not null from kk_exchanges") == [("ESB-9", "t")]
+    with pytest.raises(SqlError, match="sudah dipakai"):
+        db.sql(f"select kk_use_voucher('{v}', 'ESB-10')", sebagai=aal2(pemilik))
+    rep = j(db, "select kk_voucher_report(null)", aal2(pemilik))
+    assert [x["nota"] for x in rep["dipakai"]] == ["ESB-9"]
+
+
 # ---------- Kasir Koi ----------
 @pytest.fixture
 def toko(db):
     return Toko(db)
 
 
-def test_voucher_bonus_dipakai_di_kasir(db, toko):
+def test_voucher_bonus_dipakai_di_kasir_tercatat_nota(db, toko):
     m = db.member("6281200000001")
-    kode = db.sql(f"select kk__give_bonus('{m['sub']}', 'Es teh gratis · uji')")[0][0]
+    kode = voucher_bonus(db, m)
     r = toko.checkout(toko.payload(voucher_code=kode, total=15000, cash_received=20000))
-    assert r["id"]
-    assert db.sql("select used_at is not null from kk_exchanges") == [("t",)]
+    no = db.sql(f"select no from pos_notas where id = '{r['id']}'")[0][0]
+    assert db.sql("select used_nota, used_by is not null from kk_exchanges") == [(no, "t")]
+    rep = j(db, "select kk_voucher_report(null)", toko.pemilik)
+    assert [x["nota"] for x in rep["dipakai"]] == [no]
+
+
+def test_voucher_gagal_tidak_menghabiskan_nomor_nota(db, toko):
+    toko.ditolak(toko.payload(voucher_code="TK-ZZZZZ", total=15000, cash_received=20000), "Voucher tidak ada")
+    assert db.sql("select count(*) from pos_notas") == [("0",)]
 
 
 def test_void_nota_kecil_menurunkan_hitungan_member(db, toko):
@@ -215,12 +266,13 @@ def test_void_nota_kecil_menurunkan_hitungan_member(db, toko):
 
 
 # ---------- dijalankan di atas versi main ----------
-def test_setup_aman_di_atas_versi_main(cluster):
+@pytest.mark.parametrize("versi", ["2bdc44e", "d4f2562"])
+def test_setup_aman_di_atas_versi_main(cluster, versi):
     try:
-        lama = subprocess.run(["git", "-C", str(AKAR), "show", "2bdc44e:kolam/setup.sql"],
+        lama = subprocess.run(["git", "-C", str(AKAR), "show", f"{versi}:kolam/setup.sql"],
                               capture_output=True, text=True, check=True).stdout
     except (subprocess.CalledProcessError, FileNotFoundError):
-        pytest.skip("riwayat git main 2bdc44e tidak tersedia")
+        pytest.skip(f"riwayat git main {versi} tidak tersedia")
     db = Db("main_" + __import__("uuid").uuid4().hex[:8])
     Db._buat(db.nama)
     Db._psql(db.nama, (AKAR / "_uji" / "supabase_tiruan.sql").read_text())
@@ -240,3 +292,6 @@ def test_setup_aman_di_atas_versi_main(cluster):
     assert j(db, "select kk_me()", m)["ref_code"]
     kasir = aal2(db.user("pemilik@x.id", peran="pemilik"))
     assert j(db, "select kk_admin_summary()", kasir)["mfa"] is True
+    for sig in ("kk_use_voucher(text)", "kk_posting_bonus(text, text, text)", "kk__use_voucher(text, uuid)"):
+        assert db.sql(f"select to_regprocedure('public.{sig}') is null") == [("t",)], sig
+    assert not boleh(db, "authenticated", "public.kk__use_voucher(text, uuid, text)")
