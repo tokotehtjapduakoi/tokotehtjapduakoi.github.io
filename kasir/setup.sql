@@ -1041,23 +1041,25 @@ begin
                 'expired_unclaimed', count(*) filter (where r.claimed_by is null and r.expires_at < now()))
                 from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
                where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to),
-    -- Klaim dicurigai: kurang dari 60 detik setelah nota, ATAU member yang dalam 7 hari sudah
-    -- mengklaim >= 3 nota dari kasir yang sama.
+    -- Klaim dicurigai: member yang dalam 7 hari sudah mengklaim >= 3 nota dari kasir yang sama
+    -- (berapa pun cepatnya). Klaim cepat saja (QR dipindai di kasir) wajar, tidak ditandai sendiri;
+    -- alasan menyebut jumlahnya dan berapa yang diklaim kurang dari 60 detik setelah nota.
     'suspicious', coalesce((
       select jsonb_agg(jsonb_build_object('no', x.nota, 'reason',
-               case when x.cepat and x.sering
-                      then 'Diklaim kurang dari 60 detik setelah nota, dan member ini sering mengklaim nota kasir yang sama'
-                    when x.cepat then 'Diklaim kurang dari 60 detik setelah nota'
-                    else 'Member ini sudah mengklaim 3 nota atau lebih dari kasir yang sama dalam 7 hari' end)
+               'Member ini sudah mengklaim ' || x.n || ' nota dari kasir yang sama dalam 7 hari'
+               || case when x.cepat > 0 then ' (' || x.cepat || ' di antaranya kurang dari 60 detik setelah nota)'
+                       else ' (tidak ada yang kurang dari 60 detik setelah nota)' end)
              order by x.nota)
-        from (select r.nota, r.claimed_at - n.received_at < interval '60 seconds' as cepat,
-                     (select count(*) from kk_receipts r2
-                       where r2.claimed_by = r.claimed_by and r2.created_by = r.created_by
-                         and r2.claimed_at <= r.claimed_at and r2.claimed_at > r.claimed_at - interval '7 days') >= 3 as sering
+        from (select r.nota, c.n, c.cepat
                 from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
+                cross join lateral (
+                  select count(*) as n,
+                         count(*) filter (where r2.claimed_at - coalesce(n2.received_at, r2.created_at) < interval '60 seconds') as cepat
+                    from kk_receipts r2 left join pos_notas n2 on n2.id = r2.pos_nota_id
+                   where r2.claimed_by = r.claimed_by and r2.created_by = r.created_by
+                     and r2.claimed_at <= r.claimed_at and r2.claimed_at > r.claimed_at - interval '7 days') c
                where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
-                 and r.claimed_by is not null) x
-       where x.cepat or x.sering), '[]'::jsonb),
+                 and r.claimed_by is not null and c.n >= 3) x), '[]'::jsonb),
     'storage_mb', (select round(sum((metadata->>'size')::numeric) / 1048576, 2)
                      from storage.objects where bucket_id = 'bukti')
   );

@@ -127,15 +127,17 @@ def test_laporan_kode_dan_mencurigakan(db, toko):
         assert db.sql(f"select kk_claim_code('AAAAA-2222{i}')->>'status'", sebagai=m) == [("ok",)]
     r = laporan(db, toko.pemilik)
     assert r["codes"] == {"issued": 4, "claimed": 3, "expired_unclaimed": 1}
-    # semua klaim di bawah 60 detik; klaim ketiga juga dari member yang sering mengklaim nota kasir yang sama
-    cepat = "Diklaim kurang dari 60 detik setelah nota"
-    assert [(s["no"], s["reason"]) for s in r["suspicious"]] == [
-        (nota[0]["no"], cepat), (nota[1]["no"], cepat),
-        (nota[2]["no"], cepat + ", dan member ini sering mengklaim nota kasir yang sama")]
-    # klaim lambat: hanya yang ketiga (sering) yang tetap dicurigai
+    # klaim cepat saja tidak ditandai; klaim ketiga = member sudah mengklaim 3 nota kasir yang sama dalam 7 hari
+    assert r["suspicious"] == [{"no": nota[2]["no"], "reason":
+        "Member ini sudah mengklaim 3 nota dari kasir yang sama dalam 7 hari (3 di antaranya kurang dari 60 detik setelah nota)"}]
+    # klaim lambat tetap ditandai (berapa pun cepatnya)
     db.sql("update kk_receipts set claimed_at = claimed_at + interval '5 minutes'")
-    assert laporan(db, toko.pemilik)["suspicious"] == [
-        {"no": nota[2]["no"], "reason": "Member ini sudah mengklaim 3 nota atau lebih dari kasir yang sama dalam 7 hari"}]
+    assert laporan(db, toko.pemilik)["suspicious"] == [{"no": nota[2]["no"], "reason":
+        "Member ini sudah mengklaim 3 nota dari kasir yang sama dalam 7 hari (tidak ada yang kurang dari 60 detik setelah nota)"}]
+    # klaim lebih dari 7 hari sebelumnya tidak dihitung
+    db.sql(f"update kk_receipts set claimed_at = claimed_at - interval '8 days' where nota = '{nota[0]['no']}'")
+    assert laporan(db, toko.pemilik)["suspicious"] == []
+    db.sql(f"update kk_receipts set claimed_at = claimed_at + interval '8 days' where nota = '{nota[0]['no']}'")
     # nota kasir lain tidak ikut dihitung "sering"
     lain = db.user("lain@x.id", peran="kasir")
     db.sql(f"update kk_receipts set created_by = '{lain['sub']}' where nota = '{nota[0]['no']}'")
