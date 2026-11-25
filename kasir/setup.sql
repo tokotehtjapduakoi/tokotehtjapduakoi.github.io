@@ -881,11 +881,10 @@ begin
   if found then
     update kk_receipts set voided_at = now() where nota = r.nota;
     if r.claimed_by is not null then
-      -- hitungan member yang naik saat klaim ikut diturunkan (hanya klaim yang menarik kartu; tak boleh di bawah 0)
-      if exists (select 1 from kk_pulls where nota = r.nota) then
-        update kk_members set trx = greatest(trx - 1, 0), spent = greatest(spent - r.total, 0)
-         where user_id = r.claimed_by;
-      end if;
+      -- hitungan member yang naik saat klaim ikut diturunkan (kk__draw selalu menaikkan trx/spent,
+      -- juga untuk nota too_small; tak boleh di bawah 0)
+      update kk_members set trx = greatest(trx - 1, 0), spent = greatest(spent - r.total, 0)
+       where user_id = r.claimed_by;
       -- tarik kartu hasil klaim: satu kartu per baris tarikan, selama inventori member masih ada
       for pl in select id, member_id, card_id from kk_pulls where nota = r.nota order by id loop
         select qty into have from kk_inventory where member_id = pl.member_id and card_id = pl.card_id for update;
