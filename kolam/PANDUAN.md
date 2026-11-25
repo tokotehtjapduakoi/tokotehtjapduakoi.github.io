@@ -12,8 +12,9 @@ Ikuti langkah di bawah sekali saja (±15 menit).
 3. Tunggu sampai project siap.
 
 ## 2. Pasang database
-1. Menu **SQL Editor** → **New query**.
-2. Buka file `kolam/setup.sql` di GitHub (tombol **Raw**), salin semua, tempel, lalu **Run**. Harus muncul "Success".
+1. Di HP, buka **https://tokotehtjapduakoi.github.io/kolam/admin/sql.html** → ketuk **1. Kolam Koi** → tombol hijau **Salin semua SQL Kolam Koi**.
+2. Supabase → menu **SQL Editor** → **New query**. Tekan lama di area kosong → **Paste** → **Run**. Harus muncul "Success".
+3. Kalau Kasir Koi juga dipakai, lanjutkan dengan **2. Kasir Koi** (lihat `kasir/PANDUAN.md`).
 
 ## 3. Atur login
 Menu **Authentication**:
@@ -35,17 +36,26 @@ Menu **Authentication**:
    insert into kk_staff(user_id, role, name)
    select id, 'pemilik', 'Pemilik' from auth.users where email = 'emailkamu@gmail.com';
    ```
-3. Muat ulang halaman admin. Sekarang menu Nota, Voucher, Member, dan Staf terbuka.
+3. Muat ulang halaman admin. Menu Voucher dan Member langsung terbuka.
+4. Menu **Staf**, sakelar di **Nota**, dan reset PIN butuh **verifikasi 2 langkah**. Ikuti kotak **Verifikasi 2 langkah** di atas halaman (pasang Google Authenticator, pindai QR, ketik 6 angka). Caranya lengkap ada di `kasir/PANDUAN.md` langkah 2.
 
-Untuk kasir: minta mereka daftar di halaman admin dengan email masing-masing, lalu tambahkan email itu di menu **Staf**.
+Untuk kasir: minta mereka daftar di halaman admin dengan email masing-masing, lalu tambahkan email itu di menu **Staf** (isi juga baris untuk dirimu sendiri dengan nomor HP-mu).
 
 ## Alur harian
+
+### Sebelum Kasir Koi dipakai (masih ESB)
+1. Pelanggan bayar di ESB. Kasir membuka **Admin → Nota**, ketik nomor nota dan total persis seperti di struk, lalu **Daftarkan**.
+2. Pelanggan membuka Kolam Koi, memasukkan nomor nota dan total yang sama. Kartu ditarik dan masuk ke kolam.
+
+### Setelah Kasir Koi dipakai
 1. Pelanggan bayar. Kasir mencatat penjualan di **Kasir Koi** (`/kasir/`, lihat `kasir/PANDUAN.md`). Setelah lunas, layar menampilkan **kode klaim** `XXXXX-XXXXX`.
 2. Kasir memberikan kode itu ke pelanggan (ditunjukkan atau lewat WA). Pelanggan membuka Kolam Koi dan mengetik kode. Kartu ditarik dan langsung masuk ke kolam.
-3. Saat pelanggan menukar hadiah, ia menunjukkan kode `TK-XXXXX`. Kasir membuka **Admin → Voucher**, cek kodenya, berikan hadiahnya, lalu ketuk **tandai dipakai**.
-4. Kalau pelanggan lupa PIN, pemilik membuka **Admin → Member**, cari nomornya, buat PIN baru, lalu kirim lewat WA.
+3. Penjualan yang sudah diketik di Kasir Koi **jangan** didaftarkan lagi di **Admin → Nota**, supaya tidak dihitung dua kali. Penjualan yang hanya lewat ESB tetap didaftarkan seperti biasa.
+4. Saat ESB berhenti dipakai, pemilik membuka **Admin → Nota** dan mematikan **Nota manual oleh kasir** dan **Klaim nomor nota lama (ESB)**.
 
-Selama masih berdampingan dengan ESB, **jangan** daftarkan nota ESB di **Admin → Nota**. Setelah angka cocok, matikan **Klaim nomor nota lama (ESB)** di Admin → Nota. Detail ada di `kasir/PANDUAN.md`.
+### Setiap hari
+- Saat pelanggan menukar hadiah, ia menunjukkan kode `TK-XXXXX`. Kasir membuka **Admin → Voucher**, cek kodenya, berikan hadiahnya, lalu ketuk **tandai dipakai**.
+- Kalau pelanggan lupa PIN, pemilik membuka **Admin → Member**, cari nomornya, buat PIN baru, lalu kirim lewat WA.
 
 ## Aturan yang dipakai
 - Tarikan per nota: Rp20rb = 1, Rp45rb = 2, Rp60rb = 3, Rp80rb = 4, Rp100rb = 5.

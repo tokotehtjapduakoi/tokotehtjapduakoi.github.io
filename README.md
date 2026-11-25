@@ -67,6 +67,7 @@ Aplikasi member ada di folder `kolam/` (halaman member `kolam/`, kasir `kolam/ad
 ## Kasir Koi (POS toko)
 
 Kasir dan pemilik memakai folder `kasir/` (alamat `/kasir/`). Cara memasang, alur harian, dan masa berdampingan dengan ESB: **`kasir/PANDUAN.md`**.
+SQL database bisa disalin sekali ketuk dari HP di `/kolam/admin/sql.html` (Kolam Koi dulu, lalu Kasir Koi). Boleh dipasang kapan saja: selama masa transisi, kasir tetap mendaftarkan nota ESB seperti biasa.
 
 ## Teknis
 
