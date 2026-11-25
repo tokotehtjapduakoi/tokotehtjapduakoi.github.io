@@ -161,7 +161,7 @@ async function rpc(req, res, fn) {
 }
 
 // ---------- Tabel (PostgREST mini: hanya GET) ----------
-// Cukup untuk halaman Kolam Koi: select kolom (embed dibuang), eq./is.null, order, limit, dan Accept object (maybeSingle).
+// Cukup untuk halaman Kolam Koi: select kolom (embed dibuang), eq./in./is.null, order, limit, dan Accept object (maybeSingle).
 // Jalan sebagai role pemanggil, jadi grant + RLS berlaku seperti di Supabase.
 async function tabel(req, res, url, nama) {
   const sel = (url.searchParams.get("select") || "*").split(",").map((x) => x.trim()).filter((x) => x && !x.includes("(") && !x.includes(")"));
@@ -172,6 +172,10 @@ async function tabel(req, res, url, nama) {
     if (!NAMA.test(k)) return kirim(res, 400, { message: "kolom tidak sah" });
     if (v === "is.null") where.push(`t."${k}" is null`);
     else if (v.startsWith("eq.")) { nilai.push(v.slice(3)); where.push(`t."${k}"::text = $${nilai.length}`); }
+    else if (v.startsWith("in.(") && v.endsWith(")")) { // in.(a,b): nilai sederhana tanpa koma (cukup untuk kind=in.(hadiah,bonus))
+      nilai.push(v.slice(4, -1).split(",").map((x) => x.replace(/^"|"$/g, "")));
+      where.push(`t."${k}"::text = any($${nilai.length}::text[])`);
+    }
     else return kirim(res, 400, { message: "filter tidak didukung di server tiruan: " + k });
   }
   const order = (url.searchParams.get("order") || "").split(",").filter(Boolean).map((o) => {

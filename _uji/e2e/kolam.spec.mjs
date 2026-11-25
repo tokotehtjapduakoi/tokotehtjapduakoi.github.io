@@ -60,13 +60,13 @@ test("klaim lewat isian kode + kode salah masuk daftar tunggu", () => lingkungan
   await buka(h, server, "/kolam/");
   await daftarMember(h.page, "081234567890");
   await h.page.getByRole("heading", { name: "Masukkan kode" }).waitFor();
-  assert.equal(await h.page.getByLabel("Kode").getAttribute("autocapitalize"), "characters");
-  await h.page.getByLabel("Kode").fill("zzzzz22222");
-  assert.equal(await h.page.getByLabel("Kode").inputValue(), "ZZZZZ-22222");
+  assert.equal(await h.page.getByLabel("Kode", { exact: true }).getAttribute("autocapitalize"), "characters");
+  await h.page.getByLabel("Kode", { exact: true }).fill("zzzzz22222");
+  assert.equal(await h.page.getByLabel("Kode", { exact: true }).inputValue(), "ZZZZZ-22222");
   await h.page.getByRole("button", { name: "Cek kode & tarik" }).click();
   await h.page.getByText(/Kode belum dikenali/).waitFor();
   await h.page.getByRole("heading", { name: "Belum bisa dipakai" }).waitFor();
-  await h.page.getByLabel("Kode").fill(KODE.toLowerCase());
+  await h.page.getByLabel("Kode", { exact: true }).fill(KODE.toLowerCase());
   await h.page.getByRole("button", { name: "Cek kode & tarik" }).click();
   await h.page.getByRole("dialog", { name: "Hasil tarikan" }).waitFor();
   await h.context.close();
@@ -88,7 +88,7 @@ test("pesan status lain: kedaluwarsa, dibatalkan, diperiksa toko", () => lingkun
   await buka(h, server, "/kolam/");
   await daftarMember(h.page, "081234567890");
   const coba = async (kode, teks) => {
-    await h.page.getByLabel("Kode").fill(kode);
+    await h.page.getByLabel("Kode", { exact: true }).fill(kode);
     await h.page.getByRole("button", { name: "Cek kode & tarik" }).click();
     await h.page.getByText(teks).waitFor();
   };
@@ -127,7 +127,7 @@ test("kasir: tab Nota selama masa transisi ESB, hilang setelah nota manual dimat
   await buka(h, server, "/kolam/admin/");
   await masuk(h.page, "ocha@uji.id");
   await h.page.locator("#tabs").getByRole("button", { name: "Nota" }).waitFor();
-  assert.deepEqual(await h.page.locator("#tabs button").allInnerTexts(), ["Nota", "Voucher", "Member"]);
+  assert.deepEqual(await h.page.locator("#tabs button").allTextContents(), ["Nota", "Voucher", "Posting", "Member"]);
   assert.equal(await h.page.getByRole("heading", { name: "Verifikasi 2 langkah" }).count(), 0);
   // sakelar hanya untuk pemilik
   assert.equal(await h.page.getByLabel("Klaim nomor nota lama (ESB)").count(), 0);
@@ -151,7 +151,7 @@ test("kasir: tab Nota selama masa transisi ESB, hilang setelah nota manual dimat
   await buka(h2, server, "/kolam/admin/");
   await masuk(h2.page, "ocha@uji.id");
   await h2.page.locator("#tabs").getByRole("button", { name: "Voucher" }).waitFor();
-  assert.deepEqual(await h2.page.locator("#tabs button").allInnerTexts(), ["Voucher", "Member"]);
+  assert.deepEqual(await h2.page.locator("#tabs button").allTextContents(), ["Voucher", "Posting", "Member"]);
   await h2.context.close();
 }));
 
@@ -160,7 +160,7 @@ test("pemilik (aal2): tab Nota, sakelar klaim lama, staf dengan nomor HP", () =>
   await buka(h, server, "/kolam/admin/");
   await masuk(h.page, "pemilik@uji.id");
   await h.page.locator("#tabs").getByRole("button", { name: "Nota" }).waitFor();
-  assert.deepEqual(await h.page.locator("#tabs button").allInnerTexts(), ["Nota", "Voucher", "Member", "Staf"]);
+  assert.deepEqual(await h.page.locator("#tabs button").allTextContents(), ["Nota", "Voucher", "Posting", "Member", "Staf"]);
   const lg = h.page.getByLabel("Klaim nomor nota lama (ESB)");
   await lg.waitFor();
   assert.equal(await lg.isChecked(), true);
@@ -173,7 +173,7 @@ test("pemilik (aal2): tab Nota, sakelar klaim lama, staf dengan nomor HP", () =>
   await h.page.getByText("Nota manual oleh kasir dimatikan").waitFor();
   assert.equal((await sql.query("select kasir_nota_manual from kk_settings")).rows[0].kasir_nota_manual, false);
   // pemilik 2 langkah tetap melihat tab Nota
-  assert.deepEqual(await h.page.locator("#tabs button").allInnerTexts(), ["Nota", "Voucher", "Member", "Staf"]);
+  assert.deepEqual(await h.page.locator("#tabs button").allTextContents(), ["Nota", "Voucher", "Posting", "Member", "Staf"]);
   await h.page.locator("#tabs").getByRole("button", { name: "Staf" }).click();
   await h.page.getByLabel("Email kasir").fill("budi@uji.id");
   await h.page.getByLabel("Nama", { exact: true }).fill("Budi");
@@ -207,7 +207,7 @@ test("pemilik tanpa 2 langkah di admin: daftar TOTP lewat KoiMfa, lalu tab Nota 
   await buka(h, server, "/kolam/admin/");
   await masuk(page, "bos@uji.id");
   await page.getByRole("heading", { name: "Verifikasi 2 langkah" }).waitFor();
-  assert.deepEqual(await page.locator("#tabs button").allInnerTexts(), ["Voucher", "Member", "Staf"]);
+  assert.deepEqual(await page.locator("#tabs button").allTextContents(), ["Voucher", "Posting", "Member", "Staf"]);
   await page.getByRole("button", { name: "Pasang verifikasi 2 langkah" }).click();
   await page.getByAltText("QR verifikasi 2 langkah").waitFor();
   assert.equal(await page.locator("#mfa-rahasia").innerText(), "JBSWY3DPEHPK3PXP");
