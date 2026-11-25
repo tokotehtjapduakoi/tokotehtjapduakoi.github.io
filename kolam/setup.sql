@@ -460,3 +460,12 @@ grant execute on function public.kk_me(), public.kk_update_profile(text, boolean
   public.kk_is_staff(), public.kk_is_owner()
   to authenticated;
 grant execute on function public.kk_board(date) to anon, authenticated;
+
+-- ---------- Izin baca tabel ----------
+-- Project Supabase baru tidak lagi memberi izin otomatis. Hanya SELECT;
+-- baris mana yang boleh dilihat tetap diatur policy di atas, dan semua
+-- perubahan data tetap lewat fungsi.
+grant usage on schema public to anon, authenticated;
+grant select on public.kk_cards, public.kk_tiers, public.kk_rewards, public.kk_skins to anon, authenticated;
+grant select on public.kk_staff, public.kk_members, public.kk_receipts, public.kk_inventory,
+  public.kk_collection, public.kk_pulls, public.kk_exchanges to authenticated;
