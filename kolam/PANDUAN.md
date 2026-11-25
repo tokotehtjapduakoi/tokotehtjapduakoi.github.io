@@ -80,12 +80,23 @@ Aman dijalankan ulang: data member, kartu, dan voucher yang sudah ada tidak hila
 - Voucher muncul di **Hadiahku**. Kasir memakainya seperti voucher biasa di **Admin → Voucher** atau di Kasir Koi.
 - Kalau nota pertama itu nanti di-void, voucher ajak yang sudah keluar tidak ditarik otomatis. Cek di **Admin → Voucher** kalau ada void yang mencurigakan.
 
-**Bonus posting:**
-1. Syarat: pelanggan **sudah belanja minimal Rp20.000 hari itu** dan notanya sudah diklaim di Kolam Koi (nota yang di-void tidak dihitung). Kasir tidak bisa memberi bonus posting ke nomor HP-nya sendiri. Lalu ia menunjukkan post/story yang men-tag **@tokoteh.tjapduakoi**.
-2. Kasir membuka **Admin → Posting**, ketik nomor HP pelanggan, lalu ketuk pilihan pelanggan:
-   - **Es teh gratis**: muncul kode voucher. Berikan es tehnya, lalu tandai kode itu dipakai di tab Voucher.
-   - **+1 tarikan kartu**: pelanggan menarik kartunya sendiri di tab Tarik (tombol "Tarik kartu bonus").
-3. Berlaku **1 kali sehari** per member.
+**Bonus posting (diterbitkan pemilik dengan verifikasi 2 langkah, bukan kasir):**
+1. Pelanggan belanja minimal Rp20.000 dan memasukkan notanya di Kolam Koi, lalu posting/story dengan tag **@tokoteh.tjapduakoi**.
+2. Pelanggan menekan **Kirim bukti lewat WhatsApp** di tab Tarik. Pesannya sudah berisi nomor Kolam Koi; ia menambahkan nota dan link postingan.
+3. Pemilik cek postingannya di Instagram, lalu buka **Admin → Posting** (tab ini hanya muncul untuk akun pemilik), cari nomornya, pilih notanya, tempel link, dan pilih **Voucher es teh** atau **+1 tarikan kartu**.
+4. Voucher langsung masuk ke Hadiahku pelanggan. Balas WA-nya dengan kode voucher.
+- Satu nota hanya untuk satu bonus, paling lama 3 hari setelah belanja, maksimal 1 bonus per hari. Nota yang di-void tidak bisa dipakai, dan bonus tidak bisa diterbitkan ke nomor HP staf yang menerbitkannya.
+
+**Memakai voucher di kasir (seperti transaksi):**
+
+Di **Kasir Koi**: ketik kode `TK-XXXXX` di kolom voucher saat bayar. Satu porsi jadi gratis, voucher langsung hangus dan tercatat dengan nomor nota Kasir Koi (`K...`). Tidak perlu membuka Admin.
+
+Di POS ESB (selama masa transisi, saat **Nota manual oleh kasir** menyala; sesudahnya hanya pemilik dengan 2 langkah):
+1. Pelanggan menunjukkan kode `TK-XXXXX`. Kasir buka **Admin → Voucher → Cek**.
+2. Catat minumannya di POS sebagai transaksi **Voucher Kolam Koi** (diskon 100% / Rp0).
+3. Ketik **nomor nota POS** transaksi itu, lalu ketuk **Pakai voucher**. Voucher langsung hangus dan tercatat atas nama kasir yang masuk.
+4. Pemilik melihat **Laporan voucher** di tab Voucher: jumlah minuman gratis per hari, per kasir, lengkap dengan nota POS-nya.
+   Cocokkan dengan stok: **gelas terpakai = penjualan POS + voucher di laporan.** Selisih di luar itu tanggung jawab kasir yang bertugas.
 
 **Mengubah angka program:** Supabase → **Table Editor** → `kk_program`:
-`ajak_min_belanja` (20000), `ajak_maks_per_bulan` (15), `posting_per_hari` (1), `posting_min_belanja` (20000).
+`ajak_min_belanja` (20000), `ajak_maks_per_bulan` (15), `posting_per_hari` (1), `posting_min_belanja` (20000), `posting_maks_hari` (3).

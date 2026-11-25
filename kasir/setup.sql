@@ -684,7 +684,11 @@ begin
   -- Voucher TK-: online saja; satu porsi dari baris pertama menjadi gratis.
   if v_voucher is not null then
     if v_offline then raise exception 'Voucher tidak bisa dipakai saat offline'; end if;
-    perform kk__use_voucher(v_voucher, v_uid);
+    -- dipakai (kk__use_voucher, jalur voucher satu-satunya) setelah nomor nota dibuat, di bawah;
+    -- di sini hanya dicek supaya baris gratis tidak dihitung untuk voucher yang tidak ada
+    if not exists (select 1 from kk_exchanges where code = v_voucher and kind in ('hadiah','bonus') and used_at is null) then
+      raise exception 'Voucher tidak ada atau sudah dipakai';
+    end if;
     v_first := v_lines->0;
     if (v_first->>'qty')::int = 1 then
       v_lines := v_lines - 0;
@@ -762,6 +766,8 @@ begin
       jsonb_build_object('no', v_no, 'discount_id', v_disc.id, 'name', v_disc.name, 'amount', v_disc_amt));
   end if;
   if v_voucher is not null then
+    -- pakai voucher = transaksi: tercatat dengan nomor nota Kasir Koi ini (laporan voucher pemilik)
+    perform kk__use_voucher(v_voucher, v_uid, v_no);
     perform pos__audit('pos_notas', v_id::text, 'voucher', null, jsonb_build_object('no', v_no, 'code', v_voucher));
   end if;
 
