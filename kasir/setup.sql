@@ -143,6 +143,20 @@ create table if not exists public.pos_nota_lines(
 );
 create index if not exists pos_nota_lines_nota on public.pos_nota_lines(nota_id);
 
+-- Pengajuan void nota. Maksimal satu pengajuan terbuka (decided_at kosong) per nota.
+create table if not exists public.pos_void_requests(
+  id bigserial primary key,
+  nota_id uuid not null references public.pos_notas(id),
+  reason text not null,
+  requested_by uuid,
+  requested_at timestamptz not null default now(),
+  decided_by uuid,
+  decided_at timestamptz,
+  approved boolean,
+  cards_note text
+);
+create unique index if not exists pos_void_satu_terbuka on public.pos_void_requests(nota_id) where decided_at is null;
+
 -- Nomor urut nota per hari WITA.
 create table if not exists public.pos_counters(
   day date primary key,
@@ -427,6 +441,7 @@ begin
   if p_cash_counted is null or p_cash_counted < 0 then raise exception 'Hitungan uang tidak valid'; end if;
   if p_handover is null then raise exception 'Pilih serah terima atau tutup toko'; end if;
   perform pg_advisory_xact_lock(hashtextextended('pos_shift', 0));
+  -- FOR UPDATE: bentrok dengan FOR KEY SHARE di pos_checkout, jadi tutup shift dan checkout berurutan.
   select id into v_id from pos_shifts where cashier = auth.uid() and closed_at is null
    order by opened_at desc, id desc limit 1 for update;
   if v_id is null then raise exception 'Tidak ada shift terbuka'; end if;
@@ -734,12 +749,114 @@ begin
     select jsonb_agg(jsonb_build_object('id', n.id, 'no', n.no, 'client_at', n.client_at,
              'received_at', n.received_at, 'total', n.total, 'method', m.name, 'status', n.status,
              'offline', n.offline, 'held', n.held,
-             'has_void_request', false)  -- pengajuan void menyusul
+             'has_void_request', exists (select 1 from pos_void_requests q
+                                          where q.nota_id = n.id and q.decided_at is null))
            order by n.received_at desc, n.no desc)
       from pos_notas n
       join pos_shifts s on s.id = n.shift_id
       join pos_pay_methods m on m.id = n.method_id
      where n.cashier = auth.uid() and s.cashier = auth.uid() and s.closed_at is null), '[]'::jsonb);
+end $$;
+
+-- ---------- Void lewat persetujuan pemilik ----------
+-- Kasir pembuat nota (atau pemilik) mengajukan; hanya pemilik (aal2) yang memutuskan.
+create or replace function public.pos_void_request(p_nota uuid, p_reason text) returns bigint
+language plpgsql security definer set search_path = public as $$
+declare n pos_notas; v_reason text := trim(coalesce(p_reason, '')); v_id bigint;
+begin
+  if not kk_is_staff() then raise exception 'Khusus kasir'; end if;
+  if length(v_reason) < 5 then raise exception 'Alasan minimal 5 huruf'; end if;
+  if length(v_reason) > 300 then raise exception 'Alasan terlalu panjang'; end if;
+  -- kunci nota: pengajuan dan keputusan untuk nota yang sama berurutan
+  select * into n from pos_notas where id = p_nota for update;
+  if not found then raise exception 'Nota tidak ada'; end if;
+  if n.cashier <> auth.uid() and not kk_is_owner() then raise exception 'Bukan nota kamu'; end if;
+  if n.status <> 'lunas' then raise exception 'Nota sudah batal'; end if;
+  if exists (select 1 from pos_void_requests where nota_id = p_nota and decided_at is null) then
+    raise exception 'Sudah ada pengajuan void untuk nota ini';
+  end if;
+  insert into pos_void_requests(nota_id, reason, requested_by) values (p_nota, v_reason, auth.uid())
+    returning id into v_id;
+  perform pos__audit('pos_void_requests', v_id::text, 'ajukan_void', null,
+    jsonb_build_object('nota', n.no, 'reason', v_reason));
+  return v_id;
+end $$;
+
+-- Pengajuan terbuka (terlama dulu) dengan rincian nota, nama kasir, alasan, status klaim.
+create or replace function public.pos_void_pending() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'id', q.id, 'nota_id', n.id, 'no', n.no, 'total', n.total, 'method', m.name,
+      'client_at', n.client_at, 'cashier', coalesce(st.name, ''), 'reason', q.reason,
+      'requested_at', q.requested_at,
+      'claimed', coalesce(r.claimed_by is not null, false),
+      'pulls', (select count(*) from kk_pulls p where r.claimed_by is not null and p.nota = r.nota),
+      'lines', coalesce((select jsonb_agg(jsonb_build_object('item', l.item_name, 'variant', l.variant_name,
+                                                              'qty', l.qty, 'price', l.price, 'free', l.free) order by l.id)
+                           from pos_nota_lines l where l.nota_id = n.id), '[]'::jsonb))
+      order by q.requested_at, q.id)
+    from pos_void_requests q
+    join pos_notas n on n.id = q.nota_id
+    join pos_pay_methods m on m.id = n.method_id
+    left join kk_staff st on st.user_id = n.cashier
+    left join kk_receipts r on r.pos_nota_id = n.id
+    where q.decided_at is null), '[]'::jsonb);
+end $$;
+
+-- Putuskan pengajuan. Disetujui: nota batal, kode klaim mati, kartu yang sudah ditarik member dicabut.
+create or replace function public.pos_void_decide(p_req bigint, p_approve boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  q pos_void_requests; n pos_notas; r kk_receipts; pl record; have int;
+  missing text[] := '{}'; v_note text;
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  if p_approve is null then raise exception 'Pilih setujui atau tolak'; end if;
+  select * into q from pos_void_requests where id = p_req;
+  if not found then raise exception 'Pengajuan tidak ada'; end if;
+  -- urutan kunci: nota, lalu pengajuan (sama seperti pos_void_request: nota lebih dulu)
+  select * into n from pos_notas where id = q.nota_id for update;
+  select * into q from pos_void_requests where id = p_req for update;
+  if q.decided_at is not null then raise exception 'Pengajuan sudah diputuskan'; end if;
+
+  if not p_approve then
+    update pos_void_requests set decided_by = auth.uid(), decided_at = now(), approved = false where id = p_req;
+    perform pos__audit('pos_void_requests', p_req::text, 'tolak_void', null,
+      jsonb_build_object('nota', n.no, 'reason', q.reason));
+    return jsonb_build_object('approved', false, 'cards_missing', '[]'::jsonb);
+  end if;
+
+  if n.status <> 'lunas' then raise exception 'Nota sudah batal'; end if;
+  update pos_notas set status = 'batal', voided_at = now() where id = n.id;
+  -- Stok bahan dikembalikan: stok belum ada (rencana berikutnya), tambahkan di sini saat ada.
+  -- Total 0 tidak punya baris kk_receipts.
+  select * into r from kk_receipts where pos_nota_id = n.id for update;
+  if found then
+    update kk_receipts set voided_at = now() where nota = r.nota;
+    if r.claimed_by is not null then
+      -- tarik kartu hasil klaim: satu kartu per baris tarikan, selama inventori member masih ada
+      for pl in select id, member_id, card_id from kk_pulls where nota = r.nota order by id loop
+        select qty into have from kk_inventory where member_id = pl.member_id and card_id = pl.card_id for update;
+        if coalesce(have, 0) > 0 then
+          update kk_inventory set qty = qty - 1 where member_id = pl.member_id and card_id = pl.card_id;
+        else
+          missing := missing || pl.card_id;
+        end if;
+      end loop;
+    end if;
+  end if;
+  if cardinality(missing) > 0 then
+    v_note := 'Kartu sudah tidak ada di inventori: ' || array_to_string(missing, ', ');
+  end if;
+  update pos_void_requests set decided_by = auth.uid(), decided_at = now(), approved = true, cards_note = v_note
+   where id = p_req;
+  perform pos__audit('pos_notas', n.id::text, 'void', jsonb_build_object('status', 'lunas'),
+    jsonb_build_object('status', 'batal', 'nota', n.no, 'reason', q.reason, 'request', p_req,
+                       'cards_missing', to_jsonb(missing)));
+  return jsonb_build_object('approved', true, 'cards_missing', to_jsonb(missing));
 end $$;
 
 -- ---------- Hak akses fungsi ----------
@@ -757,5 +874,6 @@ grant execute on function public.pos_device_request(text, text), public.pos_devi
   public.pos_device_decide(text, boolean), public.pos_catalog(), public.pos_item_save(jsonb),
   public.pos_variant_save(jsonb), public.pos_method_save(jsonb), public.pos_discount_save(jsonb),
   public.pos_me(text), public.pos_checkout(jsonb), public.pos_my_notas(),
-  public.pos_shift_open(text, int), public.pos_shift_close(int, text, boolean), public.pos_shift_receive(text, int)
+  public.pos_shift_open(text, int), public.pos_shift_close(int, text, boolean), public.pos_shift_receive(text, int),
+  public.pos_void_request(uuid, text), public.pos_void_pending(), public.pos_void_decide(bigint, boolean)
   to authenticated;
