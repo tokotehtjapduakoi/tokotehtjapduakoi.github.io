@@ -17,7 +17,7 @@ async function q(p){const {data,error}=await p;if(error)throw error;return data}
 const owner=()=>sum&&sum.role==="pemilik";
 
 function nav(){const n=$("tabs");if(!sum){n.hidden=true;return}n.hidden=false;
-  const T=[["nota","Nota"],["voucher","Voucher"],["posting","Posting"],["member","Member"],...(owner()?[["staf","Staf"]]:[])];n.style.setProperty("--n",T.length);
+  const T=[["nota","Nota"],["voucher","Voucher"],...(owner()?[["posting","Posting"]]:[]),["member","Member"],...(owner()?[["staf","Staf"]]:[])];n.style.setProperty("--n",T.length);
   n.innerHTML=T.map(([k,l])=>`<button type="button" data-k="${k}" ${k===tab?'aria-current="page"':""}>${l}</button>`).join("");
   n.querySelectorAll("button").forEach(b=>b.onclick=()=>{tab=b.dataset.k;render()})}
 function head(){return `<div class="head"><h1>Admin Kolam Koi</h1><button type="button" class="btn sm ghost" id="out">Keluar</button></div>
@@ -53,24 +53,41 @@ let vc=null,openV=null;
 async function vVoucher(){openV=openV||await q(sb.from("kk_exchanges").select("code,item,created_at,kk_members(nickname,phone)").in("kind",["hadiah","bonus"]).is("used_at",null).order("created_at",{ascending:false}).limit(50));
   return head()+`<section class="card"><h2>Cek kode hadiah</h2><form id="vf" style="display:grid;gap:12px"><label for="vcode">Kode dari HP pelanggan<input id="vcode" class="txt" autocomplete="off" autocapitalize="characters" placeholder="TK-XXXXX" value="${esc(vc&&vc.code||"")}"></label><button type="submit" class="btn">Cek</button></form>
   ${vc===false?`<p class="err small">Kode tidak ditemukan. Periksa lagi hurufnya.</p>`:vc?`<div class="voucher"><b>${esc(vc.item)}</b><code>${esc(vc.code)}</code><span class="small muted">${esc(vc.nickname)} · ${hp(vc.phone)}</span><span class="small muted">${jam(vc.created_at)}</span></div>
-   ${vc.used_at?`<p class="pill bad" style="justify-self:start">Sudah dipakai ${jam(vc.used_at)}</p>`:`<button type="button" class="btn gold" id="use">Berikan hadiah & tandai dipakai</button>`}`:""}</section>
+   ${vc.used_at?`<p class="pill bad" style="justify-self:start">Sudah dipakai ${jam(vc.used_at)}${vc.used_nota?` · nota POS ${esc(vc.used_nota)}`:""}${vc.used_by_name?` · oleh ${esc(vc.used_by_name)}`:""}</p>`:`<ol class="small" style="margin:0;padding-left:18px;display:grid;gap:4px"><li>Catat minumannya di POS sebagai transaksi <b>Voucher Kolam Koi</b> (diskon 100% / Rp0).</li><li>Ketik nomor nota POS transaksi itu di bawah.</li><li>Berikan minumannya. Voucher langsung hangus.</li></ol>
+   <label for="vn">Nomor nota POS transaksi voucher<input id="vn" class="txt" autocomplete="off" autocapitalize="characters" placeholder="POS-1123-0311"></label>
+   <button type="button" class="btn gold" id="use">Pakai voucher</button>`}`:""}</section>
+  ${owner()?await vLaporan():""}
   <section class="card"><h2>Hadiah belum diambil (${openV.length})</h2><div class="list">${openV.length?openV.map(v=>`<div class="row"><div><b>${esc(v.item)}</b><div class="small muted">${esc(v.kk_members&&v.kk_members.nickname)} · ${hp(v.kk_members&&v.kk_members.phone)} · ${jam(v.created_at)}</div></div><code class="mono small">${esc(v.code)}</code></div>`).join(""):`<p class="small muted">Tidak ada.</p>`}</div></section>`}
 function bindVoucher(){$("vf").onsubmit=async e=>{e.preventDefault();const c=$("vcode").value.trim().toUpperCase();if(!c)return;try{vc=(await rpc("kk_check_voucher",{p_code:c}))||false}catch(err){toast(errMsg(err))}render()};
-  const u=$("use");if(u)u.onclick=async()=>{if(busy)return;busy=true;u.disabled=true;try{await rpc("kk_use_voucher",{p_code:vc.code});toast("Hadiah diberikan. Voucher ditandai dipakai.");vc=await rpc("kk_check_voucher",{p_code:vc.code});openV=null;await refresh()}catch(err){toast(errMsg(err))}finally{busy=false;render()}}}
+  const lh=$("lh");if(lh)lh.onchange=()=>{lapDay=lh.value;lap=null;render()};
+  const u=$("use");if(u)u.onclick=async()=>{if(busy)return;const nota=$("vn").value.trim().toUpperCase();if(nota.length<3){$("vn").focus();return toast("Isi nomor nota POS transaksi voucher ini.")}busy=true;u.disabled=true;try{await rpc("kk_use_voucher",{p_code:vc.code,p_nota:nota}).catch(e=>/function|schema cache/i.test(e.message||"")?rpc("kk_use_voucher",{p_code:vc.code}):Promise.reject(e));toast(`Voucher dipakai · nota POS ${nota}.`);lap=null;vc=await rpc("kk_check_voucher",{p_code:vc.code});openV=null;await refresh()}catch(err){toast(errMsg(err))}finally{busy=false;render()}}}
 
-/* ---------- Bonus posting ---------- */
+/* ---------- Laporan voucher (pemilik) ---------- */
+let lap=null,lapDay=new Date(Date.now()+8*36e5).toISOString().slice(0,10);
+async function vLaporan(){try{lap=lap||await rpc("kk_voucher_report",{p_day:lapDay})}catch(e){return `<section class="card"><h2>Laporan voucher</h2><p class="small muted">Jalankan SQL terbaru di Supabase untuk membuka laporan ini.</p></section>`}
+  const L=lap.dipakai||[];
+  return `<section class="card"><div class="row"><h2>Laporan voucher</h2><input type="date" id="lh" value="${esc(lapDay)}" style="font:600 14px var(--f-body);padding:6px;border-radius:8px;border:1px solid var(--line)"></div>
+  <p class="small muted">Minuman gratis yang keluar lewat voucher. Cocokkan dengan stok gelas & teh: gelas terpakai = penjualan POS + voucher di sini.</p>
+  <div class="stats"><div class="stat"><b>${L.length}</b><span>voucher dipakai</span></div><div class="stat"><b>${lap.terbit}</b><span>voucher terbit</span></div><div class="stat"><b>${(lap.per_kasir||[]).length}</b><span>kasir</span></div></div>
+  ${(lap.per_kasir||[]).map(k=>`<div class="row"><span>${esc(k.kasir)}</span><b>${k.jumlah}</b></div>`).join("")}
+  <div class="list">${L.length?L.map(v=>`<div class="row"><div><b>${esc(v.item)}</b><div class="small muted">${jam(v.at)} · ${esc(v.kasir||"-")} · ${esc(v.member)}</div></div><div style="text-align:right"><code class="mono small">${esc(v.nota||"(tanpa nota)")}</code><div class="small muted mono">${esc(v.code)}</div></div></div>`).join(""):`<p class="small muted">Belum ada voucher dipakai di tanggal ini.</p>`}</div></section>`}
+
+/* ---------- Bonus posting (pemilik) ---------- */
 let pm=null,pres=null;
-function vPosting(){return head()+`<section class="card"><h2>Bonus posting</h2><p class="small muted">Pelanggan menunjukkan post/story yang men-tag <b>@tokoteh.tjapduakoi</b>. Cek dulu postingannya benar ada dan menandai akun kita, lalu cari nomornya. Syarat: pelanggan sudah belanja hari ini dan notanya sudah dimasukkan di Kolam Koi. Berlaku 1 kali sehari.</p>
+function vPosting(){const N=pm&&pm.nota||[];return head()+`<section class="card"><h2>Terbitkan bonus posting</h2><p class="small muted">Pelanggan mengirim bukti lewat WhatsApp: nomor Kolam Koi, nota belanja, dan link post/story yang men-tag <b>@tokoteh.tjapduakoi</b>. Cek postingannya di Instagram dulu. Syarat: satu nota belanja minimal ${rp(pm&&pm.min||20000)} untuk satu bonus, paling lama ${pm&&pm.hari||3} hari setelah belanja, 1 bonus per hari.</p>
   <form id="pf2" style="display:grid;gap:12px"><label for="pp">Nomor HP member<input id="pp" class="txt" inputmode="tel" placeholder="0812..." value="${esc(pm&&hp(pm.phone)||"")}"></label><button type="submit" class="btn">Cari</button></form>
-  ${pm===false?`<p class="err small">Nomor itu belum terdaftar. Minta pelanggan daftar Kolam Koi dulu.</p>`:pm?`<div class="list"><div class="row"><span class="muted small">Nama</span><b>${esc(pm.nickname)}</b></div><div class="row"><span class="muted small">Belanja hari ini</span><b>${pm.belanja>=pm.min?`<span class="pill ok">${rp(pm.belanja)}</span>`:`<span class="pill bad">${pm.belanja?rp(pm.belanja)+" (kurang)":"belum ada nota"}</span>`}</b></div><div class="row"><span class="muted small">Bonus posting hari ini</span><b>${pm.today?`<span class="pill bad">sudah diambil</span>`:`<span class="pill ok">belum</span>`}</b></div></div>
-   ${!pm.today&&pm.belanja<pm.min?`<p class="small err">Belum bisa. Pelanggan harus belanja minimal ${rp(pm.min)} hari ini dan memasukkan notanya di Kolam Koi (tab Tarik), lalu cari lagi.</p>`:""}
-   ${pm.today||pm.belanja<pm.min?"":`<label for="pl">Link postingan (opsional)<input id="pl" class="txt" style="text-transform:none" autocomplete="off" placeholder="https://instagram.com/..."></label>
-   <p class="small" style="font-weight:600">Pelanggan memilih:</p><div class="row" style="gap:8px"><button type="button" class="btn gold" style="flex:1" data-pc="esteh">Es teh gratis</button><button type="button" class="btn" style="flex:1" data-pc="tarik">+1 tarikan kartu</button></div>`}`:""}
-  ${pres?`<div class="voucher"><b>${esc(pres.nickname)}: ${pres.choice==="esteh"?"es teh gratis":"+1 tarikan kartu"}</b>${pres.code?`<code>${esc(pres.code)}</code><span class="small muted">Langsung berikan es tehnya, lalu tandai kode ini dipakai di tab Voucher.</span>`:`<span class="small muted">Tarikan bonus muncul di HP pelanggan (tab Tarik).</span>`}</div>`:""}</section>`}
+  ${pm===false?`<p class="err small">Nomor itu belum terdaftar sebagai member.</p>`:pm?`<div class="list"><div class="row"><span class="muted small">Nama</span><b>${esc(pm.nickname)}</b></div><div class="row"><span class="muted small">Bonus posting hari ini</span><b>${pm.today?`<span class="pill bad">sudah dapat</span>`:`<span class="pill ok">belum</span>`}</b></div></div>
+   ${pm.today?"":N.length?`<fieldset style="border:none;padding:0;margin:0;display:grid;gap:6px"><legend class="small" style="font-weight:600;margin-bottom:4px">Nota belanja untuk bonus ini</legend>${N.map((n,i)=>`<label style="display:flex;gap:10px;align-items:center;color:var(--ink)"><input type="radio" name="pn" value="${esc(n.nota)}" ${i?"":"checked"} style="width:20px;height:20px"><span><b class="mono">${esc(n.nota)}</b> · ${rp(n.total)} · ${jam(n.at)}</span></label>`).join("")}</fieldset>
+   <label for="pl">Link postingan<input id="pl" class="txt" style="text-transform:none" autocomplete="off" placeholder="https://instagram.com/..."></label>
+   <p class="small" style="font-weight:600">Pilihan pelanggan:</p><div class="row" style="gap:8px"><button type="button" class="btn gold" style="flex:1" data-pc="esteh">Voucher es teh</button><button type="button" class="btn" style="flex:1" data-pc="tarik">+1 tarikan kartu</button></div>`
+   :`<p class="small err">Belum ada nota belanja minimal ${rp(pm.min)} dalam ${pm.hari} hari terakhir yang belum dipakai untuk bonus. Pelanggan perlu belanja dan memasukkan notanya di Kolam Koi dulu.</p>`}`:""}
+  ${pres?`<div class="voucher"><b>${esc(pres.nickname)}: ${pres.choice==="esteh"?"voucher es teh gratis":"+1 tarikan kartu"}</b>${pres.code?`<code>${esc(pres.code)}</code><span class="small muted">Voucher sudah masuk ke Hadiahku pelanggan. Balas WA-nya: tunjukkan kode ini ke kasir.</span>`:`<span class="small muted">Tarikan bonus sudah muncul di tab Tarik pelanggan.</span>`}</div>`:""}</section>`}
 function bindPosting(){$("pf2").onsubmit=async e=>{e.preventDefault();pres=null;const p=normPhone($("pp").value);if(!p)return toast("Nomor HP belum benar.");
     try{pm=(await rpc("kk_posting_status",{p_phone:p}))||false}catch(err){toast(errMsg(err))}render()};
-  document.querySelectorAll("[data-pc]").forEach(b=>b.onclick=async()=>{if(busy)return;busy=true;b.disabled=true;
-    try{pres=await rpc("kk_posting_bonus",{p_phone:pm.phone,p_choice:b.dataset.pc,p_link:($("pl")&&$("pl").value)||""});pm={...pm,today:true};openV=null;toast("Bonus posting dicatat.");await refresh()}catch(err){toast(errMsg(err))}finally{busy=false;render()}})}
+  document.querySelectorAll("[data-pc]").forEach(b=>b.onclick=async()=>{if(busy)return;const r=document.querySelector("input[name=pn]:checked");if(!r)return toast("Pilih nota belanjanya.");
+    const link=($("pl").value||"").trim();if(!/instagram\.com|tiktok\.com|instagr\.am/i.test(link)&&!b.dataset.ok){b.dataset.ok=1;b.textContent="Tanpa link? Ketuk lagi";return}
+    busy=true;b.disabled=true;
+    try{pres=await rpc("kk_posting_bonus",{p_phone:pm.phone,p_choice:b.dataset.pc,p_nota:r.value,p_link:link});pm=await rpc("kk_posting_status",{p_phone:pm.phone});openV=null;lap=null;toast("Bonus posting diterbitkan.");await refresh()}catch(err){toast(errMsg(err))}finally{busy=false;render()}})}
 
 /* ---------- Member ---------- */
 let mem=null;
