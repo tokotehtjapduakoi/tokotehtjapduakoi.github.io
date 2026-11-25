@@ -40,10 +40,10 @@ async function kirimKode(){const m=P.mfa;if(m.sibuk||m.kode.length!==6)return;m.
     else r=await S.sb.auth.mfa.challengeAndVerify({factorId:m.faktor,code:m.kode});
     if(r.error)throw r.error;
     const f=await S.sb.auth.refreshSession();if(f.error)throw f.error;
-    await A.muatMe();P.mfa=P0().mfa;
+    await A.muatMe();
     if(!mfaOk())throw new Error("Verifikasi belum diterima server. Coba lagi.");
-    masuk(S.tab);sesudahMe()}
-  catch(e){m.pesan=/invalid|expired|code/i.test(e.message||"")?"Kode salah atau sudah kedaluwarsa. Coba kode yang baru.":A.errMsg(e);m.kode="";}
+    P.mfa=P0().mfa;masuk(S.tab);sesudahMe()}
+  catch(e){m.pesan=/invalid|expired|code/i.test(e.message||"")?"Kode salah atau sudah kedaluwarsa. Coba kode yang baru.":A.errMsg(e);m.kode=""}
   m.sibuk=false;A.render()}
 function vMfa(){const m=P.mfa;
   const pesan=`<p class="err" role="alert">${esc(m.pesan)}</p>`;
@@ -105,16 +105,17 @@ function bindLaporan(){const h=$("lap-hari");if(h)h.onchange=()=>{if(h.value)mua
   const m=$("lap-muat");if(m)m.onclick=()=>muatLaporan()}
 
 /* ---------- Setujui: pengajuan batal + perangkat menunggu ---------- */
-const bukaFoto=async n=>{const f=P.set.foto;if(!n.photo_path||n.nota_id in f)return;f[n.nota_id]=null;let url=false;
-  try{const r=await S.sb.storage.from("bukti").createSignedUrl(n.photo_path,300);if(!r.error&&r.data)url=r.data.signedUrl}catch(e){}
-  f[n.nota_id]=url;segar("setujui")};
+const FOTO_UMUR=4*60*1000; // tautan foto berlaku 300 detik; muat ulang bila lebih tua dari ini
+const bukaFoto=async n=>{const f=P.set.foto,e=f[n.nota_id];if(!n.photo_path||(e&&Date.now()-e.at<FOTO_UMUR))return;f[n.nota_id]={at:Date.now(),url:null};let url=false;
+  try{const r=await S.sb.storage.from("bukti").createSignedUrl(n.photo_path,300);if(!r.error&&r.data)url=r.data.signedUrl}catch(x){}
+  f[n.nota_id]={at:Date.now(),url};segar("setujui")};
 async function muatSetuju(){const T=P.set;T.memuat=true;T.galat="";
   try{[T.void,T.dev]=await Promise.all([A.rpc("pos_void_pending"),A.rpc("pos_devices_list")]);T.dev=T.dev.filter(d=>d.status==="pending");
     hitungBadge();T.void.forEach(bukaFoto)}
   catch(e){T.galat=A.errMsg(e)}
   T.memuat=false;segar("setujui");A.renderTab()}
 function hitungBadge(){P.badge=P.set.void.length+P.set.dev.length}
-function vVoid(n){const T=P.set,k="v"+n.id,f=T.foto[n.nota_id];
+function vVoid(n){const T=P.set,k="v"+n.id,f=(T.foto[n.nota_id]||{}).url;
   const yakin=T.yakin&&T.yakin.k===k?T.yakin.setuju:null;
   return `<section class="card kartu-void" data-nota="${esc(n.no)}"><div class="head"><h3>Nota ${esc(n.no)}</h3><b>${rp(n.total)}</b></div>
   <p class="small muted">${esc(n.cashier||"Kasir")} · ${esc(A.waktuHP(n.client_at))} · ${esc(n.method)}</p>
@@ -227,21 +228,19 @@ function bindAtur(){const G=P.atur;
 const tahanHp=()=>S.me&&S.me.role==="pemilik"&&S.me.device!=="approved"&&["jual","nota","kas"].includes(S.tab);
 function view(tab){
   if(!S.me||S.me.role!=="pemilik")return null;
-  if(tab==="laporan")return vLaporan();
-  if(tab==="setujui"||tab==="atur"){if(!mfaOk())return vMfa();return tab==="setujui"?vSetuju():vAtur()}
+  if(OWNER_TABS.includes(tab)){if(!mfaOk())return vMfa();return tab==="laporan"?vLaporan():tab==="setujui"?vSetuju():vAtur()}
   if(tahanHp())return `<section class="card"><h2>HP ini belum disetujui</h2>
     <p class="muted">Setujui HP ini dulu di tab Setujui (perlu verifikasi 2 langkah), lalu tekan Cek lagi.</p>
     <button type="button" class="btn" id="cek-hp">Cek lagi</button></section>`;
   return null}
 function bind(tab){
   if(!S.me||S.me.role!=="pemilik")return false;
-  if(tab==="laporan"){bindLaporan();return true}
-  if(tab==="setujui"||tab==="atur"){if(!mfaOk())bindMfa();else if(tab==="setujui")bindSetuju();else bindAtur();return true}
+  if(OWNER_TABS.includes(tab)){if(!mfaOk())bindMfa();else if(tab==="laporan")bindLaporan();else if(tab==="setujui")bindSetuju();else bindAtur();return true}
   if(tahanHp()){$("cek-hp").onclick=async()=>{try{await A.muatMe()}catch(e){A.toast(A.errMsg(e))}A.render()};return true}
   return false}
 function masuk(tab){if(!OWNER_TABS.includes(tab))return;
-  if(tab==="laporan"){if(!P.lap.memuat)muatLaporan();return}
   if(!mfaOk()){muatMfa();return}
+  if(tab==="laporan"){if(!P.lap.memuat)muatLaporan();return}
   if(tab==="setujui")muatSetuju();else if(!P.atur.cat)muatAtur()}
 // Angka badge Setujui: dimuat diam-diam setelah masuk dan tiap menit.
 async function segarBadge(){if(!mfaOk()||!A.daring()||P.set.memuat)return;

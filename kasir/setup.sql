@@ -894,7 +894,7 @@ declare
   d date := coalesce(p_day, (now() at time zone 'Asia/Makassar')::date);
   v_from timestamptz; v_to timestamptz; v_omzet bigint; v_notas int;
 begin
-  if not kk_is_owner() then raise exception 'Khusus pemilik'; end if;
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
   v_from := d::timestamp at time zone 'Asia/Makassar';
   v_to := (d + 1)::timestamp at time zone 'Asia/Makassar';
   select coalesce(sum(total), 0), count(*) into v_omzet, v_notas

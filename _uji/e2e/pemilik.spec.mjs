@@ -203,3 +203,21 @@ test("laporan: peringatan marun, pemilih tanggal", () => lingkungan(async ({ ser
   assert.equal(await page.locator(".peringatan").count(), 0);
   await context.close();
 }));
+
+test("alasan void dan nama perangkat berisi HTML tampil apa adanya", () => lingkungan(async ({ server, browser, sql, foto }) => {
+  const xss = "<img src=x onerror=window.__xss=1>";
+  const k = await bukaHalaman(browser, server);
+  await siapJual(k.page, k.buka, server);
+  await jualTunai(k.page, foto, 1);
+  const nota = (await sql.query("select id from pos_notas")).rows[0].id;
+  await rpcSebagai(server, "ocha@uji.id", "pos_void_request", { p_nota: nota, p_reason: xss });
+  await k.context.close();
+  await sql.query("insert into pos_devices(id, label) values ('abcd1234abcd1234abcd1234abcd1234', $1)", [xss]);
+  const { context, page } = await pemilikMasuk(browser, server);
+  await tab(page, "Setujui").click();
+  await page.locator(".kartu-void").getByText(xss, { exact: false }).waitFor();
+  await page.locator(".baris").getByText(xss, { exact: false }).waitFor();
+  assert.equal(await page.evaluate(() => window.__xss), undefined);
+  assert.equal(await page.locator("#app img[src='x']").count(), 0);
+  await context.close();
+}));

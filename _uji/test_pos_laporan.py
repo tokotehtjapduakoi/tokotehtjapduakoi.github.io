@@ -72,8 +72,10 @@ def test_laporan_khusus_pemilik(db, toko):
     for siapa in (toko.kasir, db.user("anon@x.id")):
         with pytest.raises(SqlError, match="Khusus pemilik"):
             db.sql("select pos_report()", sebagai=siapa)
-    # aal1 pemilik cukup untuk membaca
-    assert laporan(db, {**toko.pemilik, "aal": "aal1"})["notas"] == 0
+    # pemilik tanpa aal2 ditolak (aturan global: fungsi pemilik wajib 2 langkah)
+    with pytest.raises(SqlError, match="Khusus pemilik"):
+        db.sql("select pos_report()", sebagai={**toko.pemilik, "aal": "aal1"})
+    assert laporan(db, toko.pemilik)["notas"] == 0
     with pytest.raises(SqlError):
         db.sql("select pos_report()", sebagai={"role": "anon"})
 
