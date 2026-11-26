@@ -229,7 +229,7 @@ def test_nota_terkunci(db, toko):
                      "pos_variant_save", "pos_method_save", "pos_discount_save", "pos_me", "pos_checkout",
                      "pos_my_notas", "pos_shift_open", "pos_shift_close", "pos_shift_receive",
                      "pos_void_request", "pos_void_pending", "pos_void_decide", "pos_report", "pos_report_range",
-                     "pos_held_list", "pos_hold_release"}
+                     "pos_held_list", "pos_hold_release", "pos_cash_move", "pos_cash_status"}
 
 
 def voucher(db, kode="TK-ABCDE"):

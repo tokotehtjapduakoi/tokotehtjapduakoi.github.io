@@ -66,7 +66,17 @@ Kasir otomatis keluar kalau 30 menit tidak dipakai. Keluar ditolak selama masih 
 6. **Tutup toko:** kasir terakhir → tab **Kas** → **Tutup toko** → hitung uang, foto laci → **Tutup toko sekarang**.
 7. **Pemilik:** tab **Laporan** menampilkan omzet, rata-rata nota, menu terlaris, selisih kas tiap shift, dan hal yang perlu diperiksa.
 
-**Kalau pemilik ikut jualan:** pemilik memakai tab **Jual** seperti kasir. Tab **Kas** dan **Nota** untuk pemilik ada di **Atur** → tombol **Laci kas** dan **Nota shift ini** (muncul setelah toko dibuka).
+**Kalau pemilik ikut jualan:** pemilik memakai tab **Jual** seperti kasir. Tab **Kas** dan **Nota** untuk pemilik ada di **Atur** → tombol **Kas shift saya** dan **Nota shift ini** (muncul setelah toko dibuka).
+
+**Ambil / tambah uang laci (pemilik):** misalnya setor ke bank, ambil untuk keperluan pribadi, atau menambah uang kecil untuk kembalian.
+1. Buka **Atur → Laci kas**. Terlihat uang yang **seharusnya** ada di laci sekarang.
+2. Ketuk **Ambil kas** atau **Tambah kas**, ketik jumlahnya, pilih alasan (**Setor ke bank**, **Ambil pribadi**, **Tambah uang kecil**) atau tulis sendiri.
+3. **Ambil kas wajib foto** uang yang diambil (tambah kas boleh tanpa foto).
+4. Ketuk **Catat**, lalu ketuk sekali lagi untuk yakin. Layar menampilkan uang yang seharusnya ada di laci sesudahnya. Ambil kas tidak bisa lebih besar dari uang yang seharusnya ada.
+- Bisa dicatat saat toko buka (shift kasir siapa pun) atau **setelah tutup toko** sebelum toko dibuka lagi. Kalau dicatat setelah tutup, modal awal besok = hitungan tutup toko − ambil + tambah, jadi tidak muncul peringatan modal awal yang salah.
+- Tidak bisa dicatat saat laci sedang diserahterimakan antar kasir (tunggu sampai diterima).
+- Kasir tidak melihat jumlahnya; di tab **Kas** kasir hanya melihat tulisan "Pemilik mencatat ambil/tambah kas hari ini". Hitungan laci kasir tetap tanpa contekan.
+- Semua catatan muncul di **Laporan** (Harian: bagian **Ambil / tambah kas** dan baris shift; Rentang: bagian **Catatan**).
 
 **Nota ditahan:** nota yang dibuat saat offline di HP yang kemudian dicabut muncul di **Setujui → Nota ditahan**. Periksa rinciannya dan fotonya, lalu ketuk **Lepas tahanan** dua kali. Kode klaimnya langsung bisa dipakai lagi.
 

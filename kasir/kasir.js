@@ -270,6 +270,7 @@ function bisaTutup(){return !K.sibuk&&K.hitung!==""&&!!K.foto}
 function vKas(){const sh=S.me.shift,n=nPending(),kunci=n>0;
   const mulaiDari=sh.opened_at?waktuHP(sh.opened_at):"";
   const kepala=`<section class="card"><h2>Kas</h2><p class="small muted">Shift dibuka ${esc(mulaiDari)} · modal awal ${rp(sh.cash_start)}</p>
+    ${S.me.cash_moves_today?`<p class="small muted" id="kas-pemilik">Pemilik mencatat ambil/tambah kas hari ini.</p>`:""}
     ${kunci?`<p class="err" role="alert">${esc(pesanAntre(n))}</p>`:""}
     <div class="aksi"><button type="button" class="btn${K.mode==="serah"?"":" ghost"}" id="m-serah"${kunci?" disabled":""}>Serah terima ke kasir berikutnya</button>
     <button type="button" class="btn${K.mode==="tutup"?"":" ghost"}" id="m-tutup"${kunci?" disabled":""}>Tutup toko</button></div></section>`;
@@ -402,7 +403,9 @@ function renderTab(){let n=$("tab");
   n.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>pindahTab(b.dataset.tab))}
 async function pindahTab(t){if(S.tab===t)return;S.tab=t;N.sel=null;N.batal=null;N.hapusTap=null;
   await segarBilah();
-  render();if(t==="nota")muatNota();if(adaPemilik())window.KasirPemilik.masuk(t)}
+  render();if(t==="nota")muatNota();if(adaPemilik())window.KasirPemilik.masuk(t);
+  // Kas: segarkan tanda "pemilik mencatat ambil/tambah kas" (tanpa jumlah) dari server.
+  if(t==="kas"&&daring())muatMe().then(()=>{if(S.screen==="jual"&&S.tab==="kas"&&!K.mode)render()}).catch(()=>{})}
 document.addEventListener("click",e=>{const a=e.target.closest&&e.target.closest("a[data-lapor]");
   if(a){catatLapor(a.dataset.lapor);setTimeout(()=>{if(S.screen==="jual"&&S.tab==="nota")render()},0)}},true);
 

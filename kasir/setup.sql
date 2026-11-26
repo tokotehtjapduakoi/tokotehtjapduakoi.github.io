@@ -167,6 +167,26 @@ create table if not exists public.pos_counters(
   seq int not null
 );
 
+-- Ambil / tambah uang laci oleh pemilik (mis. setor ke bank, tambah uang kecil). Menempel ke shift yang
+-- memegang laci: shift terbuka, atau tutup toko terakhir (after_close = true: dicatat setelah toko tutup,
+-- tidak mengubah selisih shift itu tetapi mengubah modal yang diharapkan saat toko dibuka lagi).
+create table if not exists public.pos_cash_moves(
+  id bigserial primary key,
+  shift_id bigint not null references public.pos_shifts(id),
+  kind text not null check (kind in ('ambil','tambah')),
+  amount int not null check (amount > 0),
+  reason text not null check (length(trim(reason)) >= 3),
+  photo_path text,
+  by_user uuid,
+  at timestamptz not null default now(),
+  after_close boolean not null default false,
+  constraint pos_cash_moves_foto_ambil check (kind <> 'ambil' or photo_path is not null)
+);
+create index if not exists pos_cash_moves_shift on public.pos_cash_moves(shift_id);
+create index if not exists pos_cash_moves_at on public.pos_cash_moves(at);
+create unique index if not exists pos_cash_moves_foto_unik on public.pos_cash_moves(photo_path)
+  where photo_path is not null;
+
 -- ---------- Kunci tabel: RLS aktif, tanpa policy, tanpa hak untuk klien ----------
 -- Berlaku untuk SEMUA tabel dan sequence pos_* (termasuk yang ditambah nanti). service_role diberi hak eksplisit.
 do $$ declare t record; begin
@@ -417,6 +437,9 @@ begin
     'name', (select name from kk_staff where user_id = auth.uid()),
     'mfa', coalesce(auth.jwt()->>'aal', '') = 'aal2',
     'device', pos__device_status(p_device),
+    -- kasir hanya tahu ADA ambil/tambah kas hari ini (tanpa jumlah); hitungan laci tetap buta
+    'cash_moves_today', exists (select 1 from pos_cash_moves
+                                 where at >= (now() at time zone 'Asia/Makassar')::date::timestamp at time zone 'Asia/Makassar'),
     'shift', case when v_shift.id is null then null else jsonb_build_object(
       'id', v_shift.id, 'opened_at', v_shift.opened_at, 'cash_start', v_shift.cash_start) end,
     'handover_waiting', case when v_wait.id is null then null else jsonb_build_object(
@@ -429,15 +452,54 @@ begin
 end $$;
 
 -- ---------- Shift & serah terima kas ----------
--- Tunai seharusnya di laci untuk satu shift = modal awal + nota tunai lunas. Internal (tidak di-grant).
+-- Tunai seharusnya di laci untuk satu shift = modal awal + nota tunai lunas − ambil + tambah kas pemilik
+-- selama shift (yang dicatat setelah tutup toko tidak dihitung di sini). Internal (tidak di-grant).
 create or replace function public.pos_shift_expected(p_shift bigint) returns int
 language sql stable security definer set search_path = public as $$
   select s.cash_start + coalesce((
     select sum(n.total) from pos_notas n join pos_pay_methods m on m.id = n.method_id
      where n.shift_id = s.id and n.status = 'lunas' and m.kind = 'tunai'), 0)::int
+    + coalesce((select sum(case when c.kind = 'tambah' then c.amount else -c.amount end)
+                  from pos_cash_moves c where c.shift_id = s.id and not c.after_close), 0)::int
     from pos_shifts s where s.id = p_shift
 $$;
 revoke execute on function public.pos_shift_expected(bigint) from public, anon, authenticated;
+
+-- Tambah − ambil kas pemilik yang dicatat setelah shift ini ditutup sebagai tutup toko. Internal.
+create or replace function public.pos__cash_after(p_shift bigint) returns int
+language sql stable security definer set search_path = public as $$
+  select coalesce(sum(case when kind = 'tambah' then amount else -amount end), 0)::int
+    from pos_cash_moves where shift_id = p_shift and after_close
+$$;
+revoke execute on function public.pos__cash_after(bigint) from public, anon, authenticated;
+
+-- Shift yang sekarang memegang laci untuk ambil/tambah kas: shift terbuka (kasir siapa pun), atau tutup toko
+-- terakhir yang belum disusul shift baru. Laci yang sedang diserahterimakan tidak bisa dicatat. Internal.
+create or replace function public.pos__cash_target() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (select jsonb_build_object('shift_id', s.id, 'open', true, 'cashier', coalesce(st.name, ''),
+                               'expected', pos_shift_expected(s.id))
+       from pos_shifts s left join kk_staff st on st.user_id = s.cashier
+      where s.closed_at is null order by s.id desc limit 1),
+    (select jsonb_build_object('shift_id', s.id, 'open', false, 'cashier', coalesce(st.name, ''),
+                               'expected', s.cash_counted + pos__cash_after(s.id), 'closed_at', s.closed_at)
+       from pos_shifts s left join kk_staff st on st.user_id = s.cashier
+      where s.id = (select max(p.id) from pos_shifts p where exists (select 1 from kk_staff k where k.user_id = p.cashier))
+        and s.closed_at is not null and s.handover = false))
+$$;
+revoke execute on function public.pos__cash_target() from public, anon, authenticated;
+
+-- Daftar ambil/tambah kas untuk laporan (rentang waktu [p_from, p_to)), terbaru dulu. Internal.
+create or replace function public.pos__cash_moves(p_from timestamptz, p_to timestamptz, p_limit int) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'at', x.at, 'kind', x.kind, 'amount', x.amount,
+                    'reason', x.reason, 'by', x.by, 'shift_id', x.shift_id, 'after_close', x.after_close)
+                  order by x.at desc, x.id desc), '[]'::jsonb)
+    from (select c.*, coalesce(st.name, '') as by from pos_cash_moves c left join kk_staff st on st.user_id = c.by_user
+           where c.at >= p_from and c.at < p_to order by c.at desc, c.id desc limit p_limit) x
+$$;
+revoke execute on function public.pos__cash_moves(timestamptz, timestamptz, int) from public, anon, authenticated;
 
 create or replace function public.pos__shift_out(p_id bigint) returns jsonb
 language sql stable security definer set search_path = public as $$
@@ -482,7 +544,8 @@ begin
   if v_photo is null then raise exception 'Foto bukti wajib'; end if;
   if not pos__photo_ok(v_photo) then raise exception 'Foto bukti tidak ditemukan'; end if;
   if exists (select 1 from pos_notas where photo_path = v_photo)
-     or exists (select 1 from pos_shifts where close_photo = v_photo) then
+     or exists (select 1 from pos_shifts where close_photo = v_photo)
+     or exists (select 1 from pos_cash_moves where photo_path = v_photo) then
     raise exception 'Foto bukti sudah dipakai';
   end if;
   update pos_shifts set closed_at = now(), cash_counted = p_cash_counted, close_photo = v_photo,
@@ -508,6 +571,58 @@ begin
   insert into pos_shifts(cashier, device, cash_start, received_from)
   values (auth.uid(), p_device, p_count, v_old.id) returning id into v_id;
   return jsonb_build_object('shift', pos__shift_out(v_id), 'selisih', p_count - v_old.cash_counted);
+end $$;
+
+-- ---------- Ambil / tambah uang laci (pemilik) ----------
+-- 'ambil' wajib foto bukti dan tidak boleh melebihi uang yang seharusnya ada di laci; 'tambah' foto boleh kosong.
+create or replace function public.pos_cash_move(p_kind text, p_amount int, p_reason text, p_photo_path text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_reason text := trim(coalesce(p_reason, '')); v_photo text := nullif(trim(coalesce(p_photo_path, '')), '');
+  v_t jsonb; v_id bigint; v_new jsonb; v_exp int;
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  if p_kind is null or p_kind not in ('ambil', 'tambah') then raise exception 'Pilih ambil atau tambah kas'; end if;
+  if p_amount is null or p_amount <= 0 then raise exception 'Jumlah uang tidak valid'; end if;
+  if length(v_reason) < 3 then raise exception 'Tulis alasan (minimal 3 huruf)'; end if;
+  if length(v_reason) > 200 then raise exception 'Alasan terlalu panjang (maksimal 200 huruf)'; end if;
+  if p_kind = 'ambil' and v_photo is null then raise exception 'Foto bukti wajib untuk ambil kas'; end if;
+  if v_photo is not null then
+    if not pos__photo_ok(v_photo) then raise exception 'Foto bukti tidak ditemukan'; end if;
+    if exists (select 1 from pos_notas where photo_path = v_photo)
+       or exists (select 1 from pos_shifts where close_photo = v_photo)
+       or exists (select 1 from pos_cash_moves where photo_path = v_photo) then
+      raise exception 'Foto bukti sudah dipakai';
+    end if;
+  end if;
+  -- Kunci yang sama dengan buka/tutup/terima shift: laci tidak berpindah selama dicatat.
+  perform pg_advisory_xact_lock(hashtextextended('pos_shift', 0));
+  v_t := pos__cash_target();
+  if v_t is null then raise exception 'Tidak ada laci yang bisa dicatat'; end if;
+  v_exp := (v_t->>'expected')::int;
+  if p_kind = 'ambil' and p_amount > v_exp then
+    raise exception 'Ambil kas melebihi uang di laci (seharusnya %)', replace(to_char(v_exp, 'FM999G999G999G990'), ',', '.');
+  end if;
+  insert into pos_cash_moves(shift_id, kind, amount, reason, photo_path, by_user, at, after_close)
+  values ((v_t->>'shift_id')::bigint, p_kind, p_amount, v_reason, v_photo, auth.uid(), clock_timestamp(),
+          not (v_t->>'open')::boolean)
+  returning id, to_jsonb(pos_cash_moves.*) into v_id, v_new;
+  perform pos__audit('pos_cash_moves', v_id::text, p_kind, null, v_new);
+  return jsonb_build_object('id', v_id, 'shift_id', (v_t->>'shift_id')::bigint, 'kind', p_kind, 'amount', p_amount,
+    'after_close', not (v_t->>'open')::boolean,
+    'expected', v_exp + case when p_kind = 'tambah' then p_amount else -p_amount end);
+end $$;
+
+-- Keadaan laci untuk pemilik: shift pemegang laci + uang yang seharusnya ada + ambil/tambah kas hari ini (WITA).
+create or replace function public.pos_cash_status() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare d date := (now() at time zone 'Asia/Makassar')::date;
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  return jsonb_build_object('target', pos__cash_target(),
+    'handover_waiting', exists (select 1 from pos_shifts where closed_at is not null and coalesce(handover, false)
+                                   and received_at is null),
+    'moves', pos__cash_moves(d::timestamp at time zone 'Asia/Makassar', (d + 1)::timestamp at time zone 'Asia/Makassar', 100));
 end $$;
 
 -- ---------- Nota terkunci ----------
@@ -655,7 +770,8 @@ begin
     raise exception 'Foto bukti tidak ditemukan';
   end if;
   if exists (select 1 from pos_notas where photo_path = v_photo)
-     or exists (select 1 from pos_shifts where close_photo = v_photo) then
+     or exists (select 1 from pos_shifts where close_photo = v_photo)
+     or exists (select 1 from pos_cash_moves where photo_path = v_photo) then
     raise exception 'Foto bukti sudah dipakai nota lain';
   end if;
 
@@ -1034,14 +1150,25 @@ begin
                'received_count', s.received_count,
                'selisih', s.cash_counted - pos_shift_expected(s.id),
                'selisih_terima', s.received_count - s.cash_counted,
+               -- ambil/tambah kas pemilik selama shift (masuk hitungan seharusnya) dan setelah tutup toko
+               'ambil', coalesce((select sum(amount) from pos_cash_moves c where c.shift_id = s.id and c.kind = 'ambil' and not c.after_close), 0),
+               'tambah', coalesce((select sum(amount) from pos_cash_moves c where c.shift_id = s.id and c.kind = 'tambah' and not c.after_close), 0),
+               'ambil_setelah_tutup', coalesce((select sum(amount) from pos_cash_moves c where c.shift_id = s.id and c.kind = 'ambil' and c.after_close), 0),
+               'tambah_setelah_tutup', coalesce((select sum(amount) from pos_cash_moves c where c.shift_id = s.id and c.kind = 'tambah' and c.after_close), 0),
                'start_mismatch', s.received_from is null and exists (
                   select 1 from pos_shifts p where p.id = (
                     -- tutup toko sebelumnya oleh staf yang masih terdaftar (shift user uji yang sudah dihapus diabaikan)
                     select max(p2.id) from pos_shifts p2 where p2.id < s.id and p2.handover = false
                        and exists (select 1 from kk_staff k where k.user_id = p2.cashier))
-                   and s.cash_start <> p.cash_counted)) order by s.opened_at, s.id)
+                   -- modal yang diharapkan = hitungan tutup toko − ambil + tambah kas setelah tutup
+                   and s.cash_start <> p.cash_counted + pos__cash_after(p.id))) order by s.opened_at, s.id)
         from pos_shifts s left join kk_staff st on st.user_id = s.cashier
        where s.opened_at >= v_from and s.opened_at < v_to), '[]'::jsonb),
+    'cash', (select jsonb_build_object(
+               'ambil_total', coalesce(sum(amount) filter (where kind = 'ambil'), 0),
+               'tambah_total', coalesce(sum(amount) filter (where kind = 'tambah'), 0),
+               'count', count(*), 'moves', pos__cash_moves(v_from, v_to, 1000))
+               from pos_cash_moves where at >= v_from and at < v_to),
     'codes', (select jsonb_build_object(
                 'issued', count(*),
                 'claimed', count(*) filter (where r.claimed_by is not null),
@@ -1127,7 +1254,12 @@ begin
                       'total_selisih', coalesce(sum(x.selisih), 0),
                       'shifts_with_selisih', count(*) filter (where x.selisih <> 0))
                from (select s.cash_counted - pos_shift_expected(s.id) as selisih from pos_shifts s
-                      where s.opened_at >= v_from and s.opened_at < v_to) x),
+                      where s.opened_at >= v_from and s.opened_at < v_to) x)
+            || (select jsonb_build_object(
+                  'ambil_total', coalesce(sum(amount) filter (where kind = 'ambil'), 0),
+                  'tambah_total', coalesce(sum(amount) filter (where kind = 'tambah'), 0),
+                  'moves_count', count(*), 'moves', pos__cash_moves(v_from, v_to, 50))
+                  from pos_cash_moves where at >= v_from and at < v_to),
     'offline', (select jsonb_build_object('count', count(*) filter (where offline),
                          'mismatch', count(*) filter (where price_mismatch), 'held', count(*) filter (where held))
                   from pos_notas where status = 'lunas' and client_at >= v_from and client_at < v_to),
@@ -1146,12 +1278,14 @@ do $$ declare f record; begin
   end loop;
 end $$;
 -- Internal, sengaja tidak di-grant (juga dicabut tepat setelah dibuat): pos__audit, pos__device_status, pos_device_ok,
--- pos__photo_ok, pos__nota_out, pos__nota_lock, pos__nota_lines_lock, pos__shift_out, pos_shift_expected, pos__sales.
+-- pos__photo_ok, pos__nota_out, pos__nota_lock, pos__nota_lines_lock, pos__shift_out, pos_shift_expected, pos__sales,
+-- pos__cash_after, pos__cash_target, pos__cash_moves.
 grant execute on function public.pos_device_request(text, text), public.pos_devices_list(),
   public.pos_device_decide(text, boolean), public.pos_catalog(), public.pos_catalog_all(), public.pos_item_save(jsonb),
   public.pos_variant_save(jsonb), public.pos_method_save(jsonb), public.pos_discount_save(jsonb),
   public.pos_me(text), public.pos_checkout(jsonb), public.pos_my_notas(),
   public.pos_shift_open(text, int), public.pos_shift_close(int, text, boolean), public.pos_shift_receive(text, int),
   public.pos_void_request(uuid, text), public.pos_void_pending(), public.pos_void_decide(bigint, boolean),
-  public.pos_report(date), public.pos_report_range(date, date), public.pos_held_list(), public.pos_hold_release(uuid)
+  public.pos_report(date), public.pos_report_range(date, date), public.pos_held_list(), public.pos_hold_release(uuid),
+  public.pos_cash_move(text, int, text, text), public.pos_cash_status()
   to authenticated;

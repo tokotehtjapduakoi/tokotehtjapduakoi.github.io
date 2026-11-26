@@ -1,6 +1,6 @@
-/* Layar pemilik Kasir Tjap Dua Koi: Laporan, Setujui (batal + nota ditahan + perangkat), Atur (menu, metode, diskon, perangkat, staf),
+/* Layar pemilik Kasir Tjap Dua Koi: Laporan, Setujui (batal + nota ditahan + perangkat), Atur (menu, metode, diskon, laci kas, perangkat, staf),
    dan verifikasi 2 langkah. Dimuat sesudah kasir.js dan memakai window.KasirApp. Semua RPC lewat sb.rpc, tanpa sb.from().
-   Tab pemilik: Jual · Laporan · Setujui · Atur. Kas dan Nota tetap bisa dibuka dari Atur ("Laci kas" / "Nota shift ini"). */
+   Tab pemilik: Jual · Laporan · Setujui · Atur. Kas dan Nota tetap bisa dibuka dari Atur ("Kas shift saya" / "Nota shift ini"). */
 (function(){
 "use strict";
 const A=window.KasirApp,S=A.S,esc=A.esc,rp=A.rp;
@@ -12,9 +12,11 @@ const P0=()=>({
   lap:{mode:"harian",day:null,data:null,memuat:false,galat:"",rg:{dari:"",sampai:"",data:null,memuat:false,galat:""}},
   set:{void:[],tahan:[],dev:[],memuat:false,galat:"",yakin:null,hasil:[],foto:{}},
   atur:{sec:"menu",cat:null,devs:[],memuat:false,galat:"",yakin:null},
+  kas:K0(),
   mfa:{tahap:null,faktor:null,enroll:null,kode:"",pesan:"",sibuk:false},
   badge:0});
 let P=P0();
+function K0(){return {st:null,memuat:false,galat:"",mode:null,jumlah:"",alasan:"",foto:null,fotoUrl:null,fotoPath:null,yakin:false,sibuk:false,pesan:"",hasil:null}}
 const mfaOk=()=>!!(S.me&&S.me.mfa);
 const ini=()=>S.tab; // tab yang sedang tampil
 const segar=tab=>{if(S.screen==="jual"&&S.tab===tab)A.render()};
@@ -89,10 +91,22 @@ function vHarian(){const L=P.lap,d=L.data;
   <section class="card"><h3>Per metode bayar</h3>${daftarBaris(d.by_method,m=>baris(`${esc(m.name)} · ${esc(m.count)} nota`,rp(m.total)))}</section>
   <section class="card"><h3>Per kasir</h3>${daftarBaris(d.by_cashier,c=>baris(`${esc(c.name||"-")} · ${esc(c.count)} nota`,rp(c.total)))}</section>
   <section class="card"><h3>Menu terlaris</h3>${daftarBaris(d.top_items,t=>baris(`${esc(t.item)} ${esc(t.variant)} × ${esc(t.qty)}`,rp(t.total)))}</section>
-  <section class="card"><h3>Shift</h3>${daftarBaris(d.shifts,s=>baris(`${esc(s.cashier||"-")} · ${esc(A.waktuHP(s.opened_at))}${s.closed_at?"–"+esc(A.waktuHP(s.closed_at)):" (berjalan)"}`,
+  <section class="card" id="lap-shift"><h3>Shift</h3>${daftarBaris(d.shifts,s=>baris(`${esc(s.cashier||"-")} · ${esc(A.waktuHP(s.opened_at))}${s.closed_at?"–"+esc(A.waktuHP(s.closed_at)):" (berjalan)"}${kasShift(s)}`,
       s.counted==null?"belum ditutup":`hitung ${rp(s.counted)} / seharusnya ${rp(s.expected)}`))}</section>
+  ${vKasLaporan(d.cash)}
   <section class="card"><h3>Kode klaim kartu</h3>${baris("Diterbitkan",esc(d.codes.issued))}${baris("Sudah diklaim",esc(d.codes.claimed))}${baris("Kedaluwarsa belum diklaim",esc(d.codes.expired_unclaimed))}
     ${d.storage_mb!=null?`<p class="small muted">Foto bukti memakai ${esc(d.storage_mb)} MB.</p>`:""}</section>`}
+// Ambil/tambah kas pemilik di baris shift (selama shift = masuk hitungan seharusnya; setelah tutup toko = modal besok).
+function kasShift(s){const a=[];
+  if(s.ambil)a.push(`ambil kas ${rp(s.ambil)}`);if(s.tambah)a.push(`tambah kas ${rp(s.tambah)}`);
+  if(s.ambil_setelah_tutup)a.push(`ambil kas ${rp(s.ambil_setelah_tutup)} setelah tutup`);
+  if(s.tambah_setelah_tutup)a.push(`tambah kas ${rp(s.tambah_setelah_tutup)} setelah tutup`);
+  return a.length?`<span class="small muted kas-shift"> · ${a.join(" · ")}</span>`:""}
+const barisGerak=m=>baris(`${esc(A.waktuHP(m.at))} · ${m.kind==="ambil"?"Ambil":"Tambah"} · ${esc(m.reason)}<span class="small muted"> · ${esc(m.by||"-")}</span>`,
+  `${m.kind==="ambil"?"−":"+"}${rp(m.amount)}`);
+function vKasLaporan(c){if(!c||!c.count)return "";
+  return `<section class="card" id="lap-kas"><h3>Ambil / tambah kas</h3>${baris("Ambil kas","−"+rp(c.ambil_total))}${baris("Tambah kas","+"+rp(c.tambah_total))}
+    ${(c.moves||[]).map(barisGerak).join("")}</section>`}
 function bindHarian(){const h=$("lap-hari");if(h)h.onchange=()=>{if(h.value)muatLaporan(h.value)};
   const m=$("lap-muat");if(m)m.onclick=()=>muatLaporan()}
 
@@ -109,6 +123,7 @@ const BLN=["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","De
 const tgl=s=>new Date(s+"T00:00:00Z");
 const iso=d=>d.toISOString().slice(0,10);
 const geser=(s,n)=>{const d=tgl(s);d.setUTCDate(d.getUTCDate()+n);return iso(d)};
+const hariWita=iso=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Makassar",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(iso));
 const hariIni=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Makassar",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
 const awalBulan=(s,n=0)=>{const d=tgl(s.slice(0,8)+"01");d.setUTCMonth(d.getUTCMonth()+n);return iso(d)};
 const CEPAT=[["7h","7 hari",t=>[geser(t,-6),t]],["ini","Bulan ini",t=>[awalBulan(t),t]],
@@ -170,6 +185,11 @@ function vRentang(){const L=P.lap,R=L.rg,d=R.data;
   cat.push(baris("Nota batal",`${esc(d.voids.count)} nota · ${rp(d.voids.total)}`));
   cat.push(baris("Diskon",`${esc(d.discounts.count)} nota · ${rp(d.discounts.total)}`));
   cat.push(baris("Selisih kas",cs.shifts_with_selisih?`${esc(tanda(cs.total_selisih))} · ${esc(cs.shifts_with_selisih)} dari ${esc(cs.shifts)} shift`:`tidak ada · ${esc(cs.shifts||0)} shift`));
+  if(cs.moves_count){cat.push(baris("Ambil kas","−"+rp(cs.ambil_total)));cat.push(baris("Tambah kas","+"+rp(cs.tambah_total)));
+    cat.push(`<details class="kas-rinci"><summary>${esc(cs.moves_count)} catatan ambil/tambah kas${cs.moves_count>(cs.moves||[]).length?` (${esc(cs.moves.length)} terbaru)`:""}</summary>
+      ${(cs.moves||[]).map(m=>baris(`${esc(tglPendek(hariWita(m.at)))} ${esc(A.waktuHP(m.at))} · ${m.kind==="ambil"?"Ambil":"Tambah"} · ${esc(m.reason)}<span class="small muted"> · ${esc(m.by||"-")}</span>`,
+        `${m.kind==="ambil"?"−":"+"}${rp(m.amount)}`)).join("")}</details>`)}
+  else cat.push(baris("Ambil / tambah kas","tidak ada"));
   cat.push(baris("Nota offline",`${esc(d.offline.count)} nota${d.offline.mismatch?` · ${esc(d.offline.mismatch)} beda harga`:""}`));
   cat.push(baris("Kode klaim diklaim",`${esc(d.codes.claimed)} dari ${esc(d.codes.issued)}`));
   if(d.pending_voids>0)cat.push(`<p class="warn">${esc(d.pending_voids)} pengajuan batal menunggu keputusanmu di tab Setujui.</p>`);
@@ -261,7 +281,7 @@ function bindSetuju(){const m=$("set-muat");if(m)m.onclick=()=>muatSetuju();
   document.querySelectorAll("[data-dev]").forEach(b=>b.onclick=()=>{b.disabled=true;putusDev(b.dataset.dev,b.dataset.setuju==="1")})}
 
 /* ---------- Atur ---------- */
-const SEKSI=[["menu","Menu"],["metode","Metode bayar"],["diskon","Diskon"],["perangkat","Perangkat"],["staf","Staf"]];
+const SEKSI=[["menu","Menu"],["metode","Metode bayar"],["diskon","Diskon"],["laci","Laci kas"],["perangkat","Perangkat"],["staf","Staf"]];
 async function muatAtur(){const G=P.atur;G.memuat=true;G.galat="";
   try{[G.cat,G.devs]=await Promise.all([A.rpc("pos_catalog_all"),A.rpc("pos_devices_list")])}
   catch(e){G.galat=A.errMsg(e)}
@@ -307,17 +327,19 @@ function vStafAtur(){const u=(CFG.kolamUrl||"")+"admin/";
   ${CFG.kolamUrl?`<a class="btn" id="staf-link" href="${esc(u)}" target="_blank" rel="noopener">Buka Admin Kolam Koi</a>`:`<p class="small muted">Alamat Kolam Koi belum diatur.</p>`}</section>`}
 function vAtur(){const G=P.atur,c=G.cat;
   const tabs=`<div class="metode" role="group" aria-label="Bagian pengaturan">${SEKSI.map(s=>`<button type="button" data-seksi="${s[0]}" aria-pressed="${G.sec===s[0]}">${s[1]}</button>`).join("")}</div>`;
-  const laci=S.me.shift?`<div class="aksi2"><button type="button" class="btn ghost" id="ke-kas">Laci kas</button><button type="button" class="btn ghost" id="ke-nota">Nota shift ini</button></div>`:"";
+  const laci=S.me.shift?`<div class="aksi2"><button type="button" class="btn ghost" id="ke-kas">Kas shift saya</button><button type="button" class="btn ghost" id="ke-nota">Nota shift ini</button></div>`:"";
   const kepala=`<section class="card"><div class="head"><h2>Atur</h2><button type="button" class="btn sm ghost" id="atur-muat"${G.memuat?" disabled":""}>Muat ulang</button></div>${tabs}${laci}
     ${G.galat?`<p class="err" role="alert">${esc(G.galat)}</p>`:""}</section>`;
+  if(G.sec==="laci")return kepala+vLaci();
   if(!c)return kepala+`<p class="muted tengah">${G.memuat?"Memuat...":""}</p>`;
   return kepala+({menu:vMenuAtur,metode:vMetodeAtur,diskon:vDiskonAtur,perangkat:vPerangkatAtur,staf:vStafAtur}[G.sec])(c)}
 function bindAtur(){const G=P.atur;
   const klik=(sel,fn)=>document.querySelectorAll(sel).forEach(b=>b.onclick=()=>fn(b));
   const id=$;const tekan=(i,fn)=>{const b=id(i);if(b)b.onclick=fn};
-  tekan("atur-muat",()=>muatAtur());
+  tekan("atur-muat",()=>{if(G.sec==="laci")muatKas();else muatAtur()});
+  if(G.sec==="laci")bindLaci();
   tekan("ke-kas",()=>A.pindahTab("kas"));tekan("ke-nota",()=>A.pindahTab("nota"));
-  klik("[data-seksi]",b=>{G.sec=b.dataset.seksi;G.yakin=null;A.render()});
+  klik("[data-seksi]",b=>{G.sec=b.dataset.seksi;G.yakin=null;A.render();if(G.sec==="laci")muatKas()});
   klik("[data-item]",b=>simpan("pos_item_save",{id:Number(b.dataset.item),active:b.dataset.aktif==="1"}));
   klik("[data-var]",b=>simpan("pos_variant_save",{id:Number(b.dataset.var),active:b.dataset.aktif==="1"}));
   klik("[data-metode]",b=>simpan("pos_method_save",{id:Number(b.dataset.metode),active:b.dataset.aktif==="1"}));
@@ -337,6 +359,67 @@ function bindAtur(){const G=P.atur;
   klik("[data-cabut]",b=>{if(G.yakin!==b.dataset.cabut){G.yakin=b.dataset.cabut;A.render();return}G.yakin=null;b.disabled=true;putusDev(b.dataset.cabut,false)});
   klik("[data-dev-atur]",b=>{b.disabled=true;putusDev(b.dataset.devAtur,true)})}
 
+/* ---------- Atur → Laci kas: ambil / tambah uang laci (pemilik) ---------- */
+// Menempel ke shift yang memegang laci (shift berjalan kasir siapa pun, atau tutup toko terakhir). Semua lewat pos_cash_move.
+const ALASAN_KAS=["Setor ke bank","Ambil pribadi","Tambah uang kecil"];
+const ribuan=d=>String(d||"").replace(/\B(?=(\d{3})+(?!\d))/g,".");
+const acakHex=()=>{const b=new Uint8Array(8);crypto.getRandomValues(b);return Array.from(b,x=>x.toString(16).padStart(2,"0")).join("")};
+async function muatKas(){const k=P.kas;k.memuat=true;k.galat="";segar("atur");
+  try{k.st=await A.rpc("pos_cash_status")}catch(e){k.galat=A.errMsg(e)}
+  k.memuat=false;segar("atur")}
+const jumlahKas=()=>parseInt(digit(P.kas.jumlah)||"0",10);
+const bisaKas=()=>{const k=P.kas;return !k.sibuk&&jumlahKas()>0&&k.alasan.trim().length>=3&&(k.mode!=="ambil"||!!k.foto)};
+const teksYakin=()=>{const k=P.kas,ambil=k.mode==="ambil";
+  return k.yakin?`Yakin ${ambil?"ambil":"tambah"} ${rp(jumlahKas())}? Ketuk lagi`:ambil?"Catat ambil kas":"Catat tambah kas"};
+function vLaci(){const k=P.kas,st=k.st,t=st&&st.target;
+  let keadaan;
+  if(!st)keadaan=`<p class="muted">${k.memuat?"Memuat...":""}</p>`;
+  else if(!t)keadaan=`<p class="muted" id="kas-keadaan">${st.handover_waiting?"Laci sedang diserahterimakan. Catat setelah kasir berikutnya menerima laci.":"Belum ada laci yang bisa dicatat. Buka toko dulu."}</p>`;
+  else keadaan=`<p class="small muted" id="kas-keadaan">${t.open?`Shift ${esc(t.cashier||"kasir")} sedang berjalan.`:`Toko sudah tutup (ditutup ${esc(t.cashier||"kasir")} ${esc(A.waktuHP(t.closed_at))}). Dicatat untuk modal saat toko dibuka lagi.`}</p>
+    <div class="total"><span>Seharusnya di laci</span><b id="kas-seharusnya">${rp(t.expected)}</b></div>`;
+  const kepala=`<section class="card"><h3>Laci kas</h3>${keadaan}
+    ${k.galat?`<p class="err" role="alert">${esc(k.galat)}</p>`:""}
+    ${k.hasil?`<p class="hasil" role="status" id="kas-hasil"><b>${esc(k.hasil)}</b></p>`:""}
+    <div class="aksi2"><button type="button" class="btn${k.mode==="ambil"?"":" ghost"}" data-kas-mode="ambil"${t?"":" disabled"}>Ambil kas</button>
+    <button type="button" class="btn${k.mode==="tambah"?"":" ghost"}" data-kas-mode="tambah"${t?"":" disabled"}>Tambah kas</button></div></section>`;
+  const form=!k.mode||!t?"":`<section class="card" id="kas-form"><h3>${k.mode==="ambil"?"Ambil uang dari laci":"Tambah uang ke laci"}</h3>
+    <label for="kas-jumlah">Jumlah (Rp)<input id="kas-jumlah" inputmode="numeric" autocomplete="off" value="${esc(ribuan(digit(k.jumlah)))}"></label>
+    <div class="small muted">Alasan</div>
+    <div class="metode" role="group" aria-label="Alasan cepat">${ALASAN_KAS.map(a=>`<button type="button" data-kas-alasan="${esc(a)}" aria-pressed="${k.alasan===a}">${esc(a)}</button>`).join("")}</div>
+    <label for="kas-alasan">Tulis alasan (minimal 3 huruf)<input id="kas-alasan" maxlength="200" autocomplete="off" value="${esc(k.alasan)}"></label>
+    <div class="fotobox"><button type="button" class="btn ghost" id="kas-foto"${k.sibuk?" disabled":""}>${k.foto?"Ganti foto bukti kas":"Ambil foto bukti kas"}</button>
+    ${k.fotoUrl?`<img class="prat" src="${esc(k.fotoUrl)}" alt="Pratinjau foto kas">`:`<span class="small muted">${k.mode==="ambil"?"Foto uang yang diambil wajib.":"Foto boleh dilewati."}</span>`}</div>
+    <p class="err" id="kas-pesan" role="alert">${esc(k.pesan)}</p>
+    <button type="button" class="btn${k.yakin?" lunas":""}" id="kas-kirim"${bisaKas()?"":" disabled"}>${esc(teksYakin())}</button>
+    <button type="button" class="btn ghost" id="kas-batal">Tidak jadi</button></section>`;
+  const gerak=st?`<section class="card" id="kas-hari-ini"><h3>Hari ini</h3>${daftarBaris(st.moves,barisGerak)}</section>`:"";
+  return kepala+form+gerak}
+function resetForm(){const k=P.kas;if(k.fotoUrl)URL.revokeObjectURL(k.fotoUrl);Object.assign(k,{mode:null,jumlah:"",alasan:"",foto:null,fotoUrl:null,fotoPath:null,yakin:false,pesan:""})}
+function bindLaci(){const k=P.kas;
+  // Ubah isian: tombol kembali ke ketukan pertama (tanpa render ulang supaya ketikan tidak hilang).
+  const segarTombol=()=>{k.yakin=false;const b=$("kas-kirim");if(b){b.disabled=!bisaKas();b.textContent=teksYakin();b.classList.remove("lunas")}};
+  document.querySelectorAll("[data-kas-mode]").forEach(b=>b.onclick=()=>{const m=b.dataset.kasMode;
+    if(k.mode===m)return;resetForm();k.mode=m;k.hasil=null;A.render();const j=$("kas-jumlah");if(j)j.focus()});
+  const j=$("kas-jumlah");if(j)j.oninput=()=>{k.jumlah=digit(j.value).replace(/^0+/,"").slice(0,9);j.value=ribuan(k.jumlah);segarTombol()};
+  const a=$("kas-alasan");if(a)a.oninput=()=>{k.alasan=a.value;
+    document.querySelectorAll("[data-kas-alasan]").forEach(c=>c.setAttribute("aria-pressed",String(c.dataset.kasAlasan===k.alasan)));segarTombol()};
+  document.querySelectorAll("[data-kas-alasan]").forEach(c=>c.onclick=()=>{k.alasan=c.dataset.kasAlasan;k.yakin=false;A.render()});
+  const f=$("kas-foto");if(f)f.onclick=async()=>{try{const x=await KasirFoto.ambil();const kc=await KasirFoto.kecilkan(x);
+      if(k.fotoUrl)URL.revokeObjectURL(k.fotoUrl);k.foto=kc;k.fotoUrl=URL.createObjectURL(kc);k.fotoPath=null;k.pesan="";k.yakin=false;A.render()}
+    catch(e){if(!/dibatalkan|Tidak ada foto/.test(e.message))A.toast(A.errMsg(e))}};
+  const bt=$("kas-batal");if(bt)bt.onclick=()=>{resetForm();A.render()};
+  const kr=$("kas-kirim");if(kr)kr.onclick=()=>{if(!bisaKas())return;if(!k.yakin){k.yakin=true;A.render();return}catatKas()}}
+async function catatKas(){const k=P.kas;k.sibuk=true;k.pesan="";A.render();
+  try{// Foto terunggah sekali; bila pencatatan gagal lalu diulang, foto yang sama dipakai lagi.
+    if(k.foto&&!k.fotoPath){const path=`${S.user.id}/kas-${acakHex()}.jpg`;
+      const {error}=await S.sb.storage.from("bukti").upload(path,k.foto,{contentType:"image/jpeg",upsert:false});
+      if(error)throw error;k.fotoPath=path}
+    const r=await A.rpc("pos_cash_move",{p_kind:k.mode,p_amount:jumlahKas(),p_reason:k.alasan.trim(),p_photo_path:k.fotoPath});
+    k.hasil=`${r.kind==="ambil"?"Ambil":"Tambah"} kas ${rp(r.amount)} tercatat. Sekarang seharusnya di laci: ${rp(r.expected)}.`;
+    resetForm();k.sibuk=false;P.lap.data=null;P.lap.rg.data=null;await muatKas();return}
+  catch(e){k.pesan=A.errMsg(e);k.yakin=false}
+  k.sibuk=false;A.render()}
+
 /* ---------- Penghubung ke kasir.js ---------- */
 const tahanHp=()=>S.me&&S.me.role==="pemilik"&&S.me.device!=="approved"&&["jual","nota","kas"].includes(S.tab);
 function view(tab){
@@ -354,7 +437,7 @@ function bind(tab){
 function masuk(tab){if(!OWNER_TABS.includes(tab))return;
   if(!mfaOk()){muatMfa();return}
   if(tab==="laporan"){muatMode();return}
-  if(tab==="setujui")muatSetuju();else if(!P.atur.cat)muatAtur()}
+  if(tab==="setujui")muatSetuju();else{if(!P.atur.cat)muatAtur();if(P.atur.sec==="laci")muatKas()}}
 // Angka badge Setujui: dimuat diam-diam setelah masuk dan tiap menit.
 async function segarBadge(){if(!mfaOk()||!A.daring()||P.set.memuat)return;
   try{const [v,t,d]=await Promise.all([A.rpc("pos_void_pending"),A.rpc("pos_held_list"),A.rpc("pos_devices_list")]);

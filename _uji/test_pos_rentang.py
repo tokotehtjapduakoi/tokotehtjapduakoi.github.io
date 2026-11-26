@@ -81,7 +81,7 @@ def test_rentang_lintas_bulan_batas_wita(db, r):
     assert x["offline"] == {"count": 1, "mismatch": 1, "held": 0}
     assert x["codes"] == {"issued": 4, "claimed": 1}
     # shift A dibuka 30 Jan (di luar rentang); shift B (1 Feb, tanpa selisih) ikut
-    assert x["cash"] == {"shifts": 1, "total_selisih": 0, "shifts_with_selisih": 0}
+    assert x["cash"] == {"shifts": 1, "total_selisih": 0, "shifts_with_selisih": 0, "ambil_total": 0, "tambah_total": 0, "moves_count": 0, "moves": []}
     y = rentang(db, r.pemilik, "2025-01-30", "2025-02-01")
     # seharusnya A = 100.000 + tunai lunas di shift A (99.000 + 15.000 + 30.000 + 15.000 + 77.000), hitungan jauh lebih kecil
     assert y["cash"]["shifts"] == 2 and y["cash"]["shifts_with_selisih"] == 1
@@ -99,7 +99,7 @@ def test_rentang_kosong(db, r):
     assert (x["omzet"], x["notas"], x["avg"], x["avg_per_day"], x["best_day"]) == (0, 0, 0, 0, None)
     assert [d["omzet"] for d in x["days"]] == [0, 0, 0]
     assert [b["notas"] for b in x["series"]] == [0, 0, 0]
-    assert x["cash"] == {"shifts": 0, "total_selisih": 0, "shifts_with_selisih": 0}
+    assert x["cash"] == {"shifts": 0, "total_selisih": 0, "shifts_with_selisih": 0, "ambil_total": 0, "tambah_total": 0, "moves_count": 0, "moves": []}
 
 
 def test_rentang_hari_hanya_sampai_hari_ini(db, r):
