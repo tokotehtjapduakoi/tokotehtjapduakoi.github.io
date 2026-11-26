@@ -114,3 +114,6 @@ select{width:100%}
 .grafik .garis{stroke:var(--line);stroke-width:1}
 .kotak{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle}
 .kotak.emas{background:var(--emas)}
+.aksi2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.aksi2 label{min-width:0}
+input[type="date"]{min-width:0}

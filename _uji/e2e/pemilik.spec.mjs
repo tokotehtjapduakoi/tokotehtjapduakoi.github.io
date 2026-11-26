@@ -293,6 +293,10 @@ test("laporan rentang: saklar Harian | Rentang, tombol cepat, rentang sendiri, d
   assert.equal(await page.locator("#rg-grafik rect").count(), 7);
   assert.equal(await page.locator("#rg-grafik rect.emas").count(), 1, "hari ini = hari terbaik");
   await page.locator("#rg-catatan").getByText("1 nota · Rp18.000").waitFor();
+  // lebar HP: tidak ada geser ke samping
+  await page.setViewportSize({ width: 360, height: 780 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
+  await page.setViewportSize({ width: 1280, height: 720 });
   // rentang sendiri: 10 hari lalu s.d. hari ini
   await page.getByLabel("Dari").fill(hariWita(-10));
   await page.locator("#rg-omzet", { hasText: "Rp67.000" }).waitFor();
