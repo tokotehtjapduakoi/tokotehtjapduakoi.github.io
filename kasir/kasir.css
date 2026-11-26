@@ -102,3 +102,15 @@ textarea{font:500 16px var(--f-body);padding:12px;border:1px solid var(--line);b
 .baris-atur input{flex:1 1 90px;min-width:0;width:auto}
 .hasil{border-color:var(--hijau)}
 select{width:100%}
+/* Laporan rentang */
+.angka2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.angka2 .lebar{grid-column:1/-1}
+.judul-rentang{font:700 17px var(--f-display)}
+.grafik{display:block;width:100%;height:auto}
+.grafik .bt{fill:var(--hijau)}
+.grafik .bt.emas{fill:var(--emas)}
+.grafik text{fill:var(--muted);font:500 10px var(--f-body)}
+.grafik .ymax{font-weight:700}
+.grafik .garis{stroke:var(--line);stroke-width:1}
+.kotak{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle}
+.kotak.emas{background:var(--emas)}

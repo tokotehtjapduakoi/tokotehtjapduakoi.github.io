@@ -253,3 +253,73 @@ test("nota ditahan: tampil di Setujui, lepas tahanan dengan dua ketuk; laporan m
   assert.equal((await sql.query("select count(*)::int n from pos_audit where action = 'lepas_tahan'")).rows[0].n, 1);
   await context.close();
 }));
+
+// Nota langsung lewat jalur pembuat database (client_at bebas), untuk laporan rentang.
+async function notaLangsung(sql, umur, total, kind = "tunai", status = "lunas") {
+  const { rows: [s] } = await sql.query(`with k as (select user_id from kk_staff where name = 'Ocha')
+    insert into pos_shifts(cashier, device, opened_at, cash_start, closed_at, cash_counted, handover)
+    select user_id, 'dev-uji', now() - $1::interval - interval '1 hour', 0, now() - $1::interval + interval '1 hour', 0, false from k
+    returning id, cashier`, [umur]);
+  await sql.query(`insert into pos_notas(id, no, cashier, device, shift_id, client_at, subtotal, total, server_total, method_id, photo_path, status)
+    values (gen_random_uuid(), 'U' || floor(random() * 1e9)::text, $1, 'dev-uji', $2, now() - $3::interval, $4, $4, $4,
+            (select id from pos_pay_methods where kind = $5 limit 1), 'f' || random()::text, $6)`, [s.cashier, s.id, umur, total, kind, status]);
+}
+const hariWita = (geser = 0) => new Date(Date.now() + 8 * 3600e3 + geser * 86400e3).toISOString().slice(0, 10);
+
+test("laporan rentang: saklar Harian | Rentang, tombol cepat, rentang sendiri, diingat", () => lingkungan(async ({ server, browser, sql }) => {
+  await notaLangsung(sql, "1 second", 30000);
+  await notaLangsung(sql, "1 day", 22000, "qris");
+  await notaLangsung(sql, "1 day", 18000, "tunai", "batal");
+  await notaLangsung(sql, "10 days", 15000);
+  const { context, page } = await pemilikMasuk(browser, server);
+  await tab(page, "Laporan").click();
+  const mode = (n) => page.getByRole("group", { name: "Jenis laporan" }).getByRole("button", { name: n, exact: true });
+  await page.locator("#lap-omzet").waitFor();
+  assert.equal(await mode("Harian").getAttribute("aria-pressed"), "true");
+  await mode("Rentang").click();
+  // bawaan: Bulan ini
+  await page.locator("#rg-omzet").waitFor();
+  assert.equal(await page.getByLabel("Dari").inputValue(), hariWita().slice(0, 8) + "01");
+  assert.equal(await page.getByLabel("Sampai").inputValue(), hariWita());
+  await page.getByRole("button", { name: "7 hari" }).click();
+  await page.locator("#rg-omzet", { hasText: "Rp52.000" }).waitFor();
+  assert.equal(await page.getByLabel("Dari").inputValue(), hariWita(-6));
+  assert.equal(await page.locator("#rg-nota").innerText(), "2");
+  assert.equal(await page.locator("#rg-avg").innerText(), "Rp26.000");
+  assert.equal(await page.locator("#rg-harian").innerText(), "Rp7.429"); // 52.000 / 7 hari
+  assert.match(await page.locator("#rg-terbaik").innerText(), /Rp30.000/);
+  const svg = page.getByRole("img", { name: /Grafik omzet per hari/ });
+  await svg.waitFor();
+  assert.equal(await page.locator("#rg-grafik rect").count(), 7);
+  assert.equal(await page.locator("#rg-grafik rect.emas").count(), 1, "hari ini = hari terbaik");
+  await page.locator("#rg-catatan").getByText("1 nota · Rp18.000").waitFor();
+  // rentang sendiri: 10 hari lalu s.d. hari ini
+  await page.getByLabel("Dari").fill(hariWita(-10));
+  await page.locator("#rg-omzet", { hasText: "Rp67.000" }).waitFor();
+  assert.equal(await page.locator("#rg-nota").innerText(), "3");
+  // judul rentang bahasa Indonesia + grafik per minggu
+  await page.getByLabel("Sampai").fill("2026-06-16");
+  await page.getByLabel("Dari").fill("2026-01-13");
+  await page.locator("#rg-judul", { hasText: "13 Januari – 16 Juni 2026" }).waitFor();
+  await page.getByRole("heading", { name: "Omzet per minggu" }).waitFor();
+  await page.getByLabel("Sampai").fill("2027-02-01");
+  await page.getByRole("alert").getByText("Rentang paling panjang 366 hari").waitFor();
+  await page.getByLabel("Sampai").fill("2026-01-01");
+  await page.getByRole("alert").getByText(/Sampai tidak boleh sebelum/).waitFor();
+  await page.getByRole("button", { name: "Bulan lalu" }).click();
+  const awalIni = new Date(hariWita().slice(0, 8) + "01T00:00:00Z");
+  const akhirLalu = new Date(awalIni - 86400e3).toISOString().slice(0, 10);
+  await page.locator("#rg-omzet").waitFor();
+  assert.equal(await page.getByLabel("Sampai").inputValue(), akhirLalu);
+  assert.equal(await page.getByLabel("Dari").inputValue(), akhirLalu.slice(0, 8) + "01");
+  // diingat setelah halaman dibuka ulang
+  await page.reload();
+  await tab(page, "Laporan").click();
+  await page.locator("#rg-omzet").waitFor();
+  assert.equal(await mode("Rentang").getAttribute("aria-pressed"), "true");
+  assert.equal(await page.getByLabel("Sampai").inputValue(), akhirLalu);
+  await mode("Harian").click();
+  await page.locator("#lap-omzet", { hasText: "Rp30.000" }).waitFor();
+  assert.equal(await page.locator("#rg-omzet").count(), 0);
+  await context.close();
+}));

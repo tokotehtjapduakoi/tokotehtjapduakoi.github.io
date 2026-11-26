@@ -958,49 +958,51 @@ begin
   return pos__nota_out(n.id);
 end $$;
 
--- ---------- Laporan harian (pemilik) ----------
--- Hari = tanggal WITA dari client_at nota (nota offline dihitung di hari ia dijual); shift di hari ia dibuka.
+-- ---------- Laporan (pemilik) ----------
+-- Angka penjualan untuk rentang [p_from, p_to) pada client_at: nota lunas saja (nota batal tidak dihitung).
+-- Dipakai laporan harian dan bulanan. Internal (tidak di-grant).
+create or replace function public.pos__sales(p_from timestamptz, p_to timestamptz) returns jsonb
+language sql stable security definer set search_path = public as $$
+  with n as (select * from pos_notas where status = 'lunas' and client_at >= p_from and client_at < p_to),
+  t as (select coalesce(sum(total), 0)::bigint as omzet, count(*)::int as notas from n)
+  select jsonb_build_object(
+    'omzet', t.omzet,
+    'notas', t.notas,
+    'avg', case when t.notas = 0 then 0 else round(t.omzet::numeric / t.notas)::bigint end,
+    'by_method', coalesce((
+      select jsonb_agg(jsonb_build_object('name', x.name, 'total', x.total, 'count', x.cnt) order by x.total desc, x.name)
+        from (select m.name, sum(n.total) as total, count(*) as cnt
+                from n join pos_pay_methods m on m.id = n.method_id group by m.name) x), '[]'::jsonb),
+    'by_cashier', coalesce((
+      select jsonb_agg(jsonb_build_object('name', x.name, 'total', x.total, 'count', x.cnt) order by x.total desc, x.name)
+        from (select coalesce(st.name, '') as name, sum(n.total) as total, count(*) as cnt
+                from n left join kk_staff st on st.user_id = n.cashier group by coalesce(st.name, '')) x), '[]'::jsonb),
+    'top_items', coalesce((
+      select jsonb_agg(jsonb_build_object('item', x.item, 'variant', x.variant, 'qty', x.qty, 'total', x.total)
+                       order by x.qty desc, x.total desc, x.item, x.variant)
+        from (select l.item_name as item, l.variant_name as variant, sum(l.qty) as qty,
+                     sum(case when l.free then 0 else l.qty * l.price end) as total
+                from pos_nota_lines l join n on n.id = l.nota_id
+               group by l.item_name, l.variant_name
+               order by qty desc, total desc, item, variant limit 10) x), '[]'::jsonb),
+    'discounts', (select jsonb_build_object('count', count(*), 'total', coalesce(sum(discount_amt), 0))
+                    from n where discount_amt > 0))
+  from t
+$$;
+revoke execute on function public.pos__sales(timestamptz, timestamptz) from public, anon, authenticated;
+
+-- Laporan harian. Hari = tanggal WITA dari client_at nota (nota offline dihitung di hari ia dijual); shift di hari ia dibuka.
 create or replace function public.pos_report(p_day date default null) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
 declare
   d date := coalesce(p_day, (now() at time zone 'Asia/Makassar')::date);
-  v_from timestamptz; v_to timestamptz; v_omzet bigint; v_notas int;
+  v_from timestamptz; v_to timestamptz;
 begin
   if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
   v_from := d::timestamp at time zone 'Asia/Makassar';
   v_to := (d + 1)::timestamp at time zone 'Asia/Makassar';
-  select coalesce(sum(total), 0), count(*) into v_omzet, v_notas
-    from pos_notas where status = 'lunas' and client_at >= v_from and client_at < v_to;
-  return jsonb_build_object(
+  return pos__sales(v_from, v_to) || jsonb_build_object(
     'day', d,
-    'omzet', v_omzet,
-    'notas', v_notas,
-    'avg', case when v_notas = 0 then 0 else round(v_omzet::numeric / v_notas)::bigint end,
-    'by_method', coalesce((
-      select jsonb_agg(jsonb_build_object('name', x.name, 'total', x.total, 'count', x.cnt) order by x.total desc, x.name)
-        from (select m.name, sum(n.total) as total, count(*) as cnt
-                from pos_notas n join pos_pay_methods m on m.id = n.method_id
-               where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
-               group by m.name) x), '[]'::jsonb),
-    'by_cashier', coalesce((
-      select jsonb_agg(jsonb_build_object('name', x.name, 'total', x.total, 'count', x.cnt) order by x.total desc, x.name)
-        from (select coalesce(st.name, '') as name, sum(n.total) as total, count(*) as cnt
-                from pos_notas n left join kk_staff st on st.user_id = n.cashier
-               where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
-               group by coalesce(st.name, '')) x), '[]'::jsonb),
-    'top_items', coalesce((
-      select jsonb_agg(jsonb_build_object('item', x.item, 'variant', x.variant, 'qty', x.qty, 'total', x.total)
-                       order by x.qty desc, x.total desc, x.item, x.variant)
-        from (select * from (
-                select l.item_name as item, l.variant_name as variant, sum(l.qty) as qty,
-                       sum(case when l.free then 0 else l.qty * l.price end) as total
-                  from pos_nota_lines l join pos_notas n on n.id = l.nota_id
-                 where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to
-                 group by l.item_name, l.variant_name) t
-               order by qty desc, total desc, item, variant limit 10) x), '[]'::jsonb),
-    'discounts', (select jsonb_build_object('count', count(*), 'total', coalesce(sum(discount_amt), 0))
-                    from pos_notas where status = 'lunas' and discount_amt > 0
-                     and client_at >= v_from and client_at < v_to),
     'voids', coalesce((
       select jsonb_agg(jsonb_build_object('no', n.no, 'total', n.total, 'reason', q.reason,
                          'by', coalesce(rq.name, ''), 'approved_by', coalesce(ap.name, '')) order by n.no)
@@ -1070,6 +1072,70 @@ begin
   );
 end $$;
 
+-- ---------- Laporan rentang tanggal (pemilik) ----------
+-- Rentang = tanggal WITA p_from s.d. p_to (keduanya ikut), paling panjang 366 hari. Nota batal tidak dihitung penjualan.
+-- days: tiap hari dalam rentang sampai hari ini (hari tanpa penjualan = 0). series: untuk grafik, ember per hari
+-- (rentang <= 62 hari), per minggu mulai Senin (<= 200 hari), atau per bulan; ember kosong ikut, dipotong ke rentang.
+create or replace function public.pos_report_range(p_from date, p_to date) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_today date := (now() at time zone 'Asia/Makassar')::date;
+  v_from timestamptz; v_to timestamptz; v_n int; v_elapsed int; v_bucket text; v_sales jsonb;
+begin
+  if not kk_owner_mfa() then raise exception 'Khusus pemilik'; end if;
+  if p_from is null or p_to is null then raise exception 'Pilih tanggal awal dan akhir'; end if;
+  if p_to < p_from then raise exception 'Tanggal akhir tidak boleh sebelum tanggal awal'; end if;
+  v_n := p_to - p_from + 1;
+  if v_n > 366 then raise exception 'Rentang paling panjang 366 hari'; end if;
+  v_from := p_from::timestamp at time zone 'Asia/Makassar';
+  v_to := (p_to + 1)::timestamp at time zone 'Asia/Makassar';
+  v_elapsed := greatest(least(p_to, v_today) - p_from + 1, 0);
+  v_bucket := case when v_n <= 62 then 'day' when v_n <= 200 then 'week' else 'month' end;
+  v_sales := pos__sales(v_from, v_to);
+  return v_sales || jsonb_build_object(
+    'from', p_from, 'to', p_to, 'days_count', v_n, 'days_elapsed', v_elapsed, 'bucket', v_bucket,
+    'avg_per_day', case when v_elapsed = 0 then 0 else round((v_sales->>'omzet')::numeric / v_elapsed)::bigint end,
+    'days', coalesce((
+      select jsonb_agg(jsonb_build_object('day', g.d, 'omzet', coalesce(x.omzet, 0), 'notas', coalesce(x.notas, 0)) order by g.d)
+        from (select t::date as d from generate_series(p_from, least(p_to, v_today), interval '1 day') as t) g
+        left join (select (client_at at time zone 'Asia/Makassar')::date as d, sum(total)::bigint as omzet, count(*)::int as notas
+                     from pos_notas where status = 'lunas' and client_at >= v_from and client_at < v_to group by 1) x
+          on x.d = g.d), '[]'::jsonb),
+    'best_day', (
+      select jsonb_build_object('day', x.d, 'omzet', x.omzet)
+        from (select (client_at at time zone 'Asia/Makassar')::date as d, sum(total)::bigint as omzet
+                from pos_notas where status = 'lunas' and client_at >= v_from and client_at < v_to
+               group by 1 order by 2 desc, 1 limit 1) x),
+    'series', (
+      select jsonb_agg(jsonb_build_object('label_start', b.s, 'label_end', b.e,
+               'omzet', coalesce(x.omzet, 0), 'notas', coalesce(x.notas, 0)) order by b.s)
+        from (select greatest(k::date, p_from) as s,
+                     least((k + case v_bucket when 'day' then interval '1 day' when 'week' then interval '7 days'
+                                     else interval '1 month' end)::date - 1, p_to) as e
+                from generate_series(date_trunc(v_bucket, p_from::timestamp),
+                                     p_to::timestamp,
+                                     case v_bucket when 'day' then interval '1 day' when 'week' then interval '7 days'
+                                          else interval '1 month' end) as k) b
+        left join lateral (
+          select sum(total)::bigint as omzet, count(*)::int as notas from pos_notas
+           where status = 'lunas' and client_at >= b.s::timestamp at time zone 'Asia/Makassar'
+             and client_at < (b.e + 1)::timestamp at time zone 'Asia/Makassar') x on true),
+    'voids', (select jsonb_build_object('count', count(*), 'total', coalesce(sum(total), 0))
+                from pos_notas where status = 'batal' and client_at >= v_from and client_at < v_to),
+    'pending_voids', (select count(*) from pos_void_requests where decided_at is null),
+    'cash', (select jsonb_build_object('shifts', count(*),
+                      'total_selisih', coalesce(sum(x.selisih), 0),
+                      'shifts_with_selisih', count(*) filter (where x.selisih <> 0))
+               from (select s.cash_counted - pos_shift_expected(s.id) as selisih from pos_shifts s
+                      where s.opened_at >= v_from and s.opened_at < v_to) x),
+    'offline', (select jsonb_build_object('count', count(*) filter (where offline),
+                         'mismatch', count(*) filter (where price_mismatch), 'held', count(*) filter (where held))
+                  from pos_notas where status = 'lunas' and client_at >= v_from and client_at < v_to),
+    'codes', (select jsonb_build_object('issued', count(*), 'claimed', count(*) filter (where r.claimed_by is not null))
+                from kk_receipts r join pos_notas n on n.id = r.pos_nota_id
+               where n.status = 'lunas' and n.client_at >= v_from and n.client_at < v_to));
+end $$;
+
 -- ---------- Hak akses fungsi ----------
 -- kolam/setup.sql sudah mencabut + memberi hak fungsi kk_*; di sini hanya fungsi pos_*
 -- yang dicabut ulang (supaya hak kk_* tidak ikut terhapus), lalu diberi satu per satu.
@@ -1080,12 +1146,12 @@ do $$ declare f record; begin
   end loop;
 end $$;
 -- Internal, sengaja tidak di-grant (juga dicabut tepat setelah dibuat): pos__audit, pos__device_status, pos_device_ok,
--- pos__photo_ok, pos__nota_out, pos__nota_lock, pos__nota_lines_lock, pos__shift_out, pos_shift_expected.
+-- pos__photo_ok, pos__nota_out, pos__nota_lock, pos__nota_lines_lock, pos__shift_out, pos_shift_expected, pos__sales.
 grant execute on function public.pos_device_request(text, text), public.pos_devices_list(),
   public.pos_device_decide(text, boolean), public.pos_catalog(), public.pos_catalog_all(), public.pos_item_save(jsonb),
   public.pos_variant_save(jsonb), public.pos_method_save(jsonb), public.pos_discount_save(jsonb),
   public.pos_me(text), public.pos_checkout(jsonb), public.pos_my_notas(),
   public.pos_shift_open(text, int), public.pos_shift_close(int, text, boolean), public.pos_shift_receive(text, int),
   public.pos_void_request(uuid, text), public.pos_void_pending(), public.pos_void_decide(bigint, boolean),
-  public.pos_report(date), public.pos_held_list(), public.pos_hold_release(uuid)
+  public.pos_report(date), public.pos_report_range(date, date), public.pos_held_list(), public.pos_hold_release(uuid)
   to authenticated;

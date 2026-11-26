@@ -9,7 +9,7 @@ const digit=s=>String(s||"").replace(/\D/g,"");
 const $=id=>document.getElementById(id);
 const OWNER_TABS=["laporan","setujui","atur"];
 const P0=()=>({
-  lap:{day:null,data:null,memuat:false,galat:""},
+  lap:{mode:"harian",day:null,data:null,memuat:false,galat:"",rg:{dari:"",sampai:"",data:null,memuat:false,galat:""}},
   set:{void:[],tahan:[],dev:[],memuat:false,galat:"",yakin:null,hasil:[],foto:{}},
   atur:{sec:"menu",cat:null,devs:[],memuat:false,galat:"",yakin:null},
   mfa:{tahap:null,faktor:null,enroll:null,kode:"",pesan:"",sibuk:false},
@@ -76,9 +76,9 @@ function peringatan(d){const w=[];
     if(s.start_mismatch)w.push(`Modal awal shift ${nm} tidak sama dengan hitungan penutupan shift sebelumnya.`)}
   for(const x of d.suspicious||[])w.push(`Nota ${esc(x.no)}: ${esc(x.reason)}.`);
   return w}
-function vLaporan(){const L=P.lap,d=L.data;
+function vHarian(){const L=P.lap,d=L.data;
   const pilih=`<label for="lap-hari">Tanggal<input id="lap-hari" type="date" value="${esc(L.day||"")}"></label>`;
-  const kepala=`<section class="card"><div class="head"><h2>Laporan</h2><button type="button" class="btn sm ghost" id="lap-muat"${L.memuat?" disabled":""}>Muat ulang</button></div>${pilih}
+  const kepala=`<section class="card"><div class="head"><h2>Laporan</h2><button type="button" class="btn sm ghost" id="lap-muat"${L.memuat?" disabled":""}>Muat ulang</button></div>${saklar()}${pilih}
     ${L.galat?`<p class="err" role="alert">${esc(L.galat)}</p>`:""}</section>`;
   if(!d)return kepala+(L.memuat?`<p class="muted tengah">Memuat...</p>`:"");
   const w=peringatan(d);
@@ -93,8 +93,112 @@ function vLaporan(){const L=P.lap,d=L.data;
       s.counted==null?"belum ditutup":`hitung ${rp(s.counted)} / seharusnya ${rp(s.expected)}`))}</section>
   <section class="card"><h3>Kode klaim kartu</h3>${baris("Diterbitkan",esc(d.codes.issued))}${baris("Sudah diklaim",esc(d.codes.claimed))}${baris("Kedaluwarsa belum diklaim",esc(d.codes.expired_unclaimed))}
     ${d.storage_mb!=null?`<p class="small muted">Foto bukti memakai ${esc(d.storage_mb)} MB.</p>`:""}</section>`}
-function bindLaporan(){const h=$("lap-hari");if(h)h.onchange=()=>{if(h.value)muatLaporan(h.value)};
+function bindHarian(){const h=$("lap-hari");if(h)h.onchange=()=>{if(h.value)muatLaporan(h.value)};
   const m=$("lap-muat");if(m)m.onclick=()=>muatLaporan()}
+
+/* ---------- Laporan rentang tanggal ---------- */
+// Pilihan terakhir (harian/rentang + tanggal) diingat di HP ini saja.
+const KUNCI_LAP="kasir.laporan";
+function simpanan(){try{const v=JSON.parse(localStorage.getItem(KUNCI_LAP)||"null");if(!v)return;
+  if(v.mode==="rentang"||v.mode==="harian")P.lap.mode=v.mode;
+  const ok=x=>typeof x==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(x);
+  if(ok(v.dari)&&ok(v.sampai)){P.lap.rg.dari=v.dari;P.lap.rg.sampai=v.sampai}}catch(e){}}
+function ingat(){const L=P.lap;try{localStorage.setItem(KUNCI_LAP,JSON.stringify({mode:L.mode,dari:L.rg.dari,sampai:L.rg.sampai}))}catch(e){}}
+const BULAN=["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+const BLN=["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+const tgl=s=>new Date(s+"T00:00:00Z");
+const iso=d=>d.toISOString().slice(0,10);
+const geser=(s,n)=>{const d=tgl(s);d.setUTCDate(d.getUTCDate()+n);return iso(d)};
+const hariIni=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Makassar",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+const awalBulan=(s,n=0)=>{const d=tgl(s.slice(0,8)+"01");d.setUTCMonth(d.getUTCMonth()+n);return iso(d)};
+const CEPAT=[["7h","7 hari",t=>[geser(t,-6),t]],["ini","Bulan ini",t=>[awalBulan(t),t]],
+  ["lalu","Bulan lalu",t=>[awalBulan(t,-1),geser(awalBulan(t),-1)]],["3b","3 bulan",t=>[awalBulan(t,-2),t]]];
+const tglPanjang=s=>{const d=tgl(s);return `${d.getUTCDate()} ${BULAN[d.getUTCMonth()]} ${d.getUTCFullYear()}`};
+const tglPendek=s=>{const d=tgl(s);return `${d.getUTCDate()} ${BLN[d.getUTCMonth()]}`};
+// "1–14 November 2026", "1 November – 12 Desember 2026", "13 Januari 2026 – 16 Juni 2027"
+function teksRentang(a,b){if(a===b)return tglPanjang(a);const x=tgl(a),y=tgl(b);
+  if(x.getUTCFullYear()!==y.getUTCFullYear())return `${tglPanjang(a)} – ${tglPanjang(b)}`;
+  if(x.getUTCMonth()!==y.getUTCMonth())return `${x.getUTCDate()} ${BULAN[x.getUTCMonth()]} – ${tglPanjang(b)}`;
+  return `${x.getUTCDate()}–${tglPanjang(b)}`}
+// Rupiah ringkas untuk sumbu grafik: Rp850rb, Rp1,5jt
+const rpPendek=n=>n>=1e6?"Rp"+String(Math.round(n/1e5)/10).replace(".",",")+"jt":n>=1000?"Rp"+Math.round(n/1000)+"rb":rp(n);
+function atasBulat(m){if(m<=0)return 0;const p=Math.pow(10,Math.floor(Math.log10(m)));
+  for(const f of [1,1.5,2,2.5,3,4,5,6,8,10])if(f*p>=m)return f*p;return 10*p}
+async function muatRentang(dari,sampai){const R=P.lap.rg;
+  if(dari!==undefined){R.dari=dari;R.sampai=sampai}
+  if(!R.dari||!R.sampai){const [a,b]=CEPAT[1][2](hariIni());R.dari=a;R.sampai=b}
+  ingat();
+  if(R.dari>R.sampai){R.galat="Tanggal Sampai tidak boleh sebelum tanggal Dari.";R.data=null;segar("laporan");return}
+  R.memuat=true;R.galat="";segar("laporan");
+  try{R.data=await A.rpc("pos_report_range",{p_from:R.dari,p_to:R.sampai})}
+  catch(e){R.galat=A.errMsg(e);R.data=null}
+  R.memuat=false;segar("laporan")}
+// Grafik batang omzet (SVG buatan sendiri). Ember per hari / minggu / bulan mengikuti server.
+function grafik(d){const se=d.series||[],n=se.length;if(!n)return "";
+  const W=340,H=196,atas=24,bawah=150,kiri=4,lebar=(W-kiri*2)/n,maks=atasBulat(Math.max(...se.map(b=>b.omzet)));
+  const t=hariIni(),best=d.best_day&&d.best_day.day,isi=(b,x)=>x&&b.label_start<=x&&x<=b.label_end;
+  const namaEmber=b=>d.bucket==="day"?tglPanjang(b.label_start):d.bucket==="week"?`${tglPendek(b.label_start)} – ${tglPendek(b.label_end)}`:`${BULAN[tgl(b.label_start).getUTCMonth()]} ${tgl(b.label_start).getUTCFullYear()}`;
+  const satuTahun=se[0].label_start.slice(0,4)===se[n-1].label_end.slice(0,4),langkah=Math.ceil(n/6);
+  const label=(b,i)=>{const x=tgl(b.label_start),tg=x.getUTCDate();
+    if(d.bucket==="day"){const muncul=[1,5,10,15,20,25].includes(tg);
+      return muncul?[String(tg),tg===1||i===0?BLN[x.getUTCMonth()]:""]:i===0?[String(tg),BLN[x.getUTCMonth()]]:null}
+    if(d.bucket==="week")return i%langkah===0?[tglPendek(b.label_start),""]:null;
+    return [BLN[x.getUTCMonth()],(!satuTahun&&(x.getUTCMonth()===0||i===0))?String(x.getUTCFullYear()):""]};
+  let batang="",teks="";
+  se.forEach((b,i)=>{const h=maks?(b.omzet/maks)*(bawah-atas):0,x=kiri+i*lebar+lebar*0.15,w=Math.max(lebar*0.7,1);
+    const emas=isi(b,best)&&b.omzet>0||isi(b,t);
+    batang+=`<rect class="bt${emas?" emas":""}" x="${x.toFixed(1)}" y="${(bawah-h).toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(h,0).toFixed(1)}" rx="1.5"><title>${esc(namaEmber(b))}: ${esc(rp(b.omzet))}, ${esc(b.notas)} nota</title></rect>`;
+    const l=label(b,i);if(l){const cx=(kiri+i*lebar+lebar/2).toFixed(1);
+      teks+=`<text x="${cx}" y="164" text-anchor="middle">${esc(l[0])}</text>${l[1]?`<text x="${cx}" y="178" text-anchor="middle">${esc(l[1])}</text>`:""}`}});
+  const per={day:"hari",week:"minggu",month:"bulan"}[d.bucket]||"hari";
+  const judul=`Grafik omzet per ${per}, ${teksRentang(d.from,d.to)}. Tertinggi ${rpPendek(maks)}.${best?` Hari terbaik ${tglPanjang(best)}: ${rp(d.best_day.omzet)}.`:""}`;
+  return `<section class="card"><h3>Omzet per ${per}</h3>
+  <svg class="grafik" id="rg-grafik" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="rg-grafik-judul" preserveAspectRatio="xMidYMid meet">
+    <title id="rg-grafik-judul">${esc(judul)}</title>
+    <line class="garis" x1="${kiri}" x2="${W-kiri}" y1="${atas}" y2="${atas}" stroke-dasharray="3 3"></line>
+    <text class="ymax" x="${kiri}" y="${atas-8}">${esc(maks?rpPendek(maks):"Rp0")}</text>
+    <line class="garis" x1="${kiri}" x2="${W-kiri}" y1="${bawah}" y2="${bawah}"></line>${batang}${teks}</svg>
+  <p class="small muted"><span class="kotak emas"></span> Emas = ${d.bucket==="day"?"hari":d.bucket==="week"?"minggu":"bulan"} terbaik dan hari ini</p></section>`}
+function vRentang(){const L=P.lap,R=L.rg,d=R.data;
+  const kepala=`<section class="card"><div class="head"><h2>Laporan</h2><button type="button" class="btn sm ghost" id="rg-muat"${R.memuat?" disabled":""}>Muat ulang</button></div>${saklar()}
+    <div class="cepat" role="group" aria-label="Pilih cepat">${CEPAT.map(c=>`<button type="button" data-cepat="${c[0]}">${c[1]}</button>`).join("")}</div>
+    <div class="aksi2"><label for="rg-dari">Dari<input id="rg-dari" type="date" value="${esc(R.dari)}"></label>
+    <label for="rg-sampai">Sampai<input id="rg-sampai" type="date" value="${esc(R.sampai)}"></label></div>
+    ${R.galat?`<p class="err" role="alert">${esc(R.galat)}</p>`:""}</section>`;
+  if(!d)return kepala+(R.memuat?`<p class="muted tengah">Memuat...</p>`:"");
+  const cs=d.cash||{},cat=[];
+  cat.push(baris("Nota batal",`${esc(d.voids.count)} nota · ${rp(d.voids.total)}`));
+  cat.push(baris("Diskon",`${esc(d.discounts.count)} nota · ${rp(d.discounts.total)}`));
+  cat.push(baris("Selisih kas",cs.shifts_with_selisih?`${esc(tanda(cs.total_selisih))} · ${esc(cs.shifts_with_selisih)} dari ${esc(cs.shifts)} shift`:`tidak ada · ${esc(cs.shifts||0)} shift`));
+  cat.push(baris("Nota offline",`${esc(d.offline.count)} nota${d.offline.mismatch?` · ${esc(d.offline.mismatch)} beda harga`:""}`));
+  cat.push(baris("Kode klaim diklaim",`${esc(d.codes.claimed)} dari ${esc(d.codes.issued)}`));
+  if(d.pending_voids>0)cat.push(`<p class="warn">${esc(d.pending_voids)} pengajuan batal menunggu keputusanmu di tab Setujui.</p>`);
+  const terbaik=d.best_day?`${esc(tglPendek(d.best_day.day))}<span class="small muted"> ${rp(d.best_day.omzet)}</span>`:"-";
+  return kepala+`<section class="card"><p class="judul-rentang" id="rg-judul">${esc(teksRentang(d.from,d.to))}</p>
+    <div class="angka angka2"><div><span class="small muted">Omzet</span><b id="rg-omzet">${rp(d.omzet)}</b></div>
+    <div><span class="small muted">Jumlah nota</span><b id="rg-nota">${esc(d.notas)}</b></div>
+    <div><span class="small muted">Rata-rata per nota</span><b id="rg-avg">${rp(d.avg)}</b></div>
+    <div><span class="small muted">Rata-rata per hari</span><b id="rg-harian">${rp(d.avg_per_day)}</b></div>
+    <div class="lebar"><span class="small muted">Hari terbaik</span><b id="rg-terbaik">${terbaik}</b></div></div>
+    <p class="small muted">${esc(d.days_elapsed)} hari${d.days_elapsed<d.days_count?` (dari ${esc(d.days_count)} hari, sisanya belum lewat)`:""}</p></section>
+  ${grafik(d)}
+  <section class="card"><h3>Per metode bayar</h3>${daftarBaris(d.by_method,m=>baris(`${esc(m.name)} · ${esc(m.count)} nota`,rp(m.total)))}</section>
+  <section class="card"><h3>Per kasir</h3>${daftarBaris(d.by_cashier,c=>baris(`${esc(c.name||"-")} · ${esc(c.count)} nota`,rp(c.total)))}</section>
+  <section class="card"><h3>Menu terlaris</h3>${daftarBaris(d.top_items,t=>baris(`${esc(t.item)} ${esc(t.variant)} × ${esc(t.qty)}`,rp(t.total)))}</section>
+  <section class="card" id="rg-catatan"><h3>Catatan</h3>${cat.join("")}</section>`}
+function bindRentang(){const a=$("rg-dari"),b=$("rg-sampai");
+  const ubah=()=>{if(a.value&&b.value)muatRentang(a.value,b.value)};
+  if(a)a.onchange=ubah;if(b)b.onchange=ubah;
+  document.querySelectorAll("[data-cepat]").forEach(x=>x.onclick=()=>{const c=CEPAT.find(c=>c[0]===x.dataset.cepat);const [d1,d2]=c[2](hariIni());muatRentang(d1,d2)});
+  const m=$("rg-muat");if(m)m.onclick=()=>muatRentang()}
+/* Saklar Harian | Rentang */
+const saklar=()=>`<div class="metode" role="group" aria-label="Jenis laporan">${[["harian","Harian"],["rentang","Rentang"]].map(m=>
+  `<button type="button" data-mode="${m[0]}" aria-pressed="${P.lap.mode===m[0]}">${m[1]}</button>`).join("")}</div>`;
+function muatMode(){const L=P.lap;if(L.mode==="rentang"){if(!L.rg.memuat)muatRentang()}else if(!L.memuat)muatLaporan()}
+const vLaporan=()=>P.lap.mode==="rentang"?vRentang():vHarian();
+function bindLaporan(){document.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>{if(P.lap.mode===b.dataset.mode)return;
+    P.lap.mode=b.dataset.mode;ingat();A.render();muatMode()});
+  if(P.lap.mode==="rentang")bindRentang();else bindHarian()}
 
 /* ---------- Setujui: pengajuan batal + perangkat menunggu ---------- */
 const FOTO_UMUR=4*60*1000; // tautan foto berlaku 300 detik; muat ulang bila lebih tua dari ini
@@ -249,7 +353,7 @@ function bind(tab){
   return false}
 function masuk(tab){if(!OWNER_TABS.includes(tab))return;
   if(!mfaOk()){muatMfa();return}
-  if(tab==="laporan"){if(!P.lap.memuat)muatLaporan();return}
+  if(tab==="laporan"){muatMode();return}
   if(tab==="setujui")muatSetuju();else if(!P.atur.cat)muatAtur()}
 // Angka badge Setujui: dimuat diam-diam setelah masuk dan tiap menit.
 async function segarBadge(){if(!mfaOk()||!A.daring()||P.set.memuat)return;
@@ -259,5 +363,6 @@ async function segarBadge(){if(!mfaOk()||!A.daring()||P.set.memuat)return;
 function sesudahMe(){if(S.me&&S.me.role==="pemilik"&&mfaOk())segarBadge()}
 setInterval(()=>{if(S.me&&S.me.role==="pemilik"&&S.tab!=="setujui")segarBadge()},60*1000);
 function tabs(){return [["jual","Jual"],["laporan","Laporan"],["setujui","Setujui",P.badge>0?String(P.badge):"" ],["atur","Atur",null,["nota","kas"]]]}
-window.KasirPemilik={tabs,view,bind,masuk,sesudahMe,reset(){P=P0()}};
+simpanan();
+window.KasirPemilik={tabs,view,bind,masuk,sesudahMe,reset(){P=P0();simpanan()}};
 })();

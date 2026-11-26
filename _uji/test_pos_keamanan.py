@@ -4,7 +4,7 @@ import pytest
 from db import AKAR, Db, SqlError, aal2
 
 INTERNAL = ["pos__audit", "pos__device_status", "pos_device_ok", "pos__nota_out", "pos__nota_lock",
-            "pos__nota_lines_lock", "pos__photo_ok", "pos__shift_out", "pos_shift_expected",
+            "pos__nota_lines_lock", "pos__photo_ok", "pos__shift_out", "pos_shift_expected", "pos__sales",
             "kk__use_voucher", "kk__draw", "kk__nota_manual_ok"]
 
 
