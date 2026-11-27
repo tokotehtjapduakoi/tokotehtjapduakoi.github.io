@@ -489,7 +489,18 @@ setInterval(()=>{if(S.user&&S.antre.some(it=>!it.error&&Antrean.milik(it)===S.us
 
 // Sesi tersimpan di HP (dipakai saat offline, tanpa menunggu percobaan refresh token).
 const userTersimpan=()=>{const a=bacaJson("kasir-auth");return a&&a.user||null};
-async function boot(){if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+// Versi baru (service worker baru mengambil alih): muat ulang sekali, kecuali ada keranjang/Bayar yang belum selesai.
+function pasangPembaruan(){const sw=navigator.serviceWorker;if(!sw)return;
+  let sudah=false;const ada=!!sw.controller; // tanpa pengendali lama = pemasangan pertama, tidak perlu muat ulang
+  sw.addEventListener("controllerchange",()=>{if(!ada||sudah)return;sudah=true;
+    let muat=true;try{const t=Number(sessionStorage.getItem("kasir-reload"))||0;muat=Date.now()-t>10000;if(muat&&!J.cart.length)sessionStorage.setItem("kasir-reload",String(Date.now()))}catch(_){}
+    if(!muat)return;
+    if(!J.cart.length){location.reload();return}
+    const b=document.createElement("div");b.className="bilah on";b.id="versi-baru";b.setAttribute("role","status");
+    b.innerHTML=`<p>Versi baru siap — muat ulang setelah transaksi ini</p><button type="button" class="btn sm">Muat ulang</button>`;
+    b.querySelector("button").onclick=()=>location.reload();
+    document.body.prepend(b)})}
+async function boot(){if("serviceWorker" in navigator){pasangPembaruan();navigator.serviceWorker.register("sw.js").catch(()=>{})}
   // Minta browser tidak membersihkan antrean (IndexedDB) saat ruang HP menipis.
   if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
   if(!CFG.supabaseUrl||!CFG.supabaseKey||!window.supabase){render();return}

@@ -212,3 +212,23 @@ test("Lunas tidak menunggu kiriman yang lambat", async () => {
   assert.equal(await page.evaluate(() => Antrean.jumlah()), 0);
   await context.close();
 });
+
+test("berkas kasir yang berubah di server langsung dipakai pada pembukaan berikutnya tanpa muat ulang kedua", async () => {
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await buka();
+  await swSiap(page);
+  await page.evaluate(() => navigator.serviceWorker.controller || new Promise((ok) => navigator.serviceWorker.addEventListener("controllerchange", ok, { once: true })));
+  await page.reload(); // pastikan cache terisi dan halaman dikendalikan SW
+  assert.equal(await page.evaluate(() => window.__versiUji), undefined);
+  await context.route(/\/kasir\/kasir\.js(\?.*)?$/, async (r) => {
+    const asli = await r.fetch();
+    await r.fulfill({ response: asli, body: (await asli.text()) + "\nwindow.__versiUji='baru';" });
+  });
+  await page.reload();
+  assert.equal(await page.evaluate(() => window.__versiUji), "baru");
+  // offline: kembali ke salinan cache (yang sudah versi baru)
+  await internet(context, false);
+  await page.reload();
+  assert.equal(await page.evaluate(() => window.__versiUji), "baru");
+  await context.close();
+});
