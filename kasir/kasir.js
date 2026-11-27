@@ -6,7 +6,8 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,3200)}
 const putus=e=>/Failed to fetch|NetworkError|Load failed|network error/i.test((e&&e.message)||String(e));
-const errMsg=e=>putus(e)?"Koneksi internet bermasalah.":((e&&e.message)||String(e));
+const errMsg=e=>{if(KoiMfa.sesiHabis(e)){sesiHabis();return KoiMfa.PESAN_HABIS}
+  return putus(e)?"Koneksi internet bermasalah.":((e&&e.message)||String(e))};
 const DIAM_MAKS=30*60*1000; // logout otomatis setelah 30 menit tanpa sentuhan/ketikan
 
 const S={sb:null,user:null,me:null,catalog:null,device:null,screen:"masuk",antre:[],tab:"jual",tutup:null};
@@ -421,6 +422,7 @@ async function mulai(nama){S.device=deviceId();
   catch(err){if(putus(err)){const o=siapOffline();  // jangan keluarkan kasir hanya karena sinyal
       if(o){Object.assign(S,o,{screen:"jual"});aktif=Date.now();render();kirimAntrean();return}
       S.screen="putus";render();return}
+    if(KoiMfa.sesiHabis(err)){await sesiHabis();return}
     const m=errMsg(err);await keluar(true);galat=m==="Khusus kasir"?"Akun ini bukan staf toko. Minta pemilik menambahkan emailmu.":m;render();return}
   aktif=Date.now();render();kirimAntrean()}
 // otomatis=true: dipanggil sistem (diam/gagal masuk). Keluar manual ditolak selama antrean belum kosong.
@@ -431,6 +433,19 @@ async function keluar(otomatis){const n=await antrean();
   localStorage.removeItem("kasir.me");
   Object.assign(S,{user:null,me:null,catalog:null,screen:"masuk",antre:[],tab:"jual",tutup:null});J=J0();K=K0();N=N0();B=B0();galat="";if(window.KasirPemilik)window.KasirPemilik.reset();render()}
 
+// Sesi login habis (HP lama didiamkan): keluar lokal dan tampilkan layar masuk. Antrean offline (IndexedDB) tidak disentuh;
+// nota menunggu terkirim setelah kasir masuk lagi. Jangan pernah menampilkan galat Inggris mentah.
+let habisJalan=false;
+async function sesiHabis(){if(!S.user||habisJalan)return;habisJalan=true;
+  try{await S.sb.auth.signOut({scope:"local"}).catch(()=>{});localStorage.removeItem("kasir.me");
+    Object.assign(S,{user:null,me:null,catalog:null,screen:"masuk",tab:"jual",tutup:null});J=J0();K=K0();N=N0();B=B0();galat="";
+    if(window.KasirPemilik)window.KasirPemilik.reset();await segarBilah();toast(KoiMfa.PESAN_HABIS);render()}
+  finally{habisJalan=false}}
+// Halaman dibuka lagi: sesi sudah hilang padahal layar masih menampilkan kasir yang masuk (hanya dicek saat online).
+async function cekSesi(){if(!S.sb||!S.user||document.hidden||!daring())return;
+  try{const {data,error}=await S.sb.auth.getSession();if(!data.session&&!(error&&putus(error)))await sesiHabis()}catch(e){}}
+addEventListener("focus",cekSesi);
+
 /* ---------- Logout otomatis ---------- */
 let aktif=Date.now();
 ["pointerdown","keydown"].forEach(ev=>addEventListener(ev,()=>{aktif=Date.now()},{capture:true,passive:true}));
@@ -439,7 +454,7 @@ async function cekDiam(){if(cekDiamJalan||!S.user||Date.now()-aktif<DIAM_MAKS)re
   try{if(await antrean()>0)return;await keluar(true);if(!S.user)toast("Keluar otomatis: 30 menit tidak dipakai.")}
   finally{cekDiamJalan=false}}
 setInterval(cekDiam,30*1000);
-document.addEventListener("visibilitychange",()=>{if(!document.hidden)cekDiam()});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){cekDiam();cekSesi()}});
 
 /* ---------- Antrean offline & bilah status ---------- */
 // Pemicu: aplikasi dibuka, event online, dan tiap 30 detik selama ada nota menunggu.

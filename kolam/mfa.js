@@ -22,7 +22,13 @@ const KoiMfa={
     if(r.error)throw r.error;
     const f=await sb.auth.refreshSession();if(f.error)throw f.error},
   /* Kode salah atau kedaluwarsa? (untuk pesan yang ramah) */
-  kodeSalah:e=>/invalid|expired|code/i.test((e&&e.message)||"")
+  kodeSalah:e=>!KoiMfa.sesiHabis(e)&&/invalid|expired|code/i.test((e&&e.message)||""),
+  /* Galat dari Supabase Auth/PostgREST karena sesi login sudah tidak berlaku (HP lama didiamkan)? */
+  sesiHabis:e=>{if(!e)return false;
+    if(e.name==="AuthSessionMissingError"||e.code==="PGRST301"||e.code==="refresh_token_not_found"||e.code==="session_not_found"||e.code==="bad_jwt")return true;
+    if(e.name==="AuthApiError"&&e.status===401)return true;
+    return /Auth session missing|AuthSessionMissing|JWT|Invalid Refresh Token|Refresh Token Not Found|session_not_found|session (has )?expired/i.test(e.message||"")}
 };
+KoiMfa.PESAN_HABIS="Sesi habis, silakan masuk lagi.";
 window.KoiMfa=KoiMfa;
 })();

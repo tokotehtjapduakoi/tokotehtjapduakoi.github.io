@@ -9,7 +9,9 @@ const num=v=>Number(String(v).replace(/\D/g,""))||0;
 const hp=p=>p?"0"+String(p).slice(2):"";
 const jam=t=>new Date(t).toLocaleString("id-ID",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
 function toast(m){const t=$("toast");t.textContent=m;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,3200)}
-const errMsg=e=>{const m=(e&&e.message)||String(e);if(/Failed to fetch|NetworkError/i.test(m))return "Koneksi internet bermasalah.";return m};
+// Sesi login habis (HP lama didiamkan): keluar lokal, tampilkan layar masuk. Jangan pernah menampilkan galat Inggris mentah.
+const errMsg=e=>{if(KoiMfa.sesiHabis(e)){sesiHabis();return KoiMfa.PESAN_HABIS}
+  const m=(e&&e.message)||String(e);if(/Failed to fetch|NetworkError/i.test(m))return "Koneksi internet bermasalah.";return m};
 let sb=null,user=null,sum=null,tab="voucher",authMode="masuk",tiers=[[100000,5],[80000,4],[60000,3],[45000,2],[20000,1]],busy=false;
 const pullsFor=t=>{for(const[m,n]of tiers)if(t>=m)return n;return 0};
 async function rpc(fn,a){const {data,error}=await sb.rpc(fn,a||{});if(error)throw error;return data}
@@ -183,8 +185,16 @@ function bindAuth(){document.querySelectorAll("[data-m]").forEach(b=>b.onclick=(
 
 async function refresh(){sum=await rpc("kk_admin_summary")}
 async function start(){const {data}=await sb.auth.getSession();user=data.session&&data.session.user;sum=null;
-  if(user){try{await refresh()}catch(e){sum=null;$("app").innerHTML=`<div class="head"><h1>Admin Kolam Koi</h1></div><section class="card"><h2>Belum jadi staf</h2><p class="muted">Akun <b>${esc(user.email)}</b> sudah masuk, tapi belum ditambahkan sebagai kasir. Minta pemilik menambahkan emailmu di menu Staf.</p><button class="btn ghost" id="out2">Keluar</button></section>`;$("out2").onclick=logout;nav();return}}
+  if(user){try{await refresh()}catch(e){sum=null;if(KoiMfa.sesiHabis(e)){await sesiHabis();return}$("app").innerHTML=`<div class="head"><h1>Admin Kolam Koi</h1></div><section class="card"><h2>Belum jadi staf</h2><p class="muted">Akun <b>${esc(user.email)}</b> sudah masuk, tapi belum ditambahkan sebagai kasir. Minta pemilik menambahkan emailmu di menu Staf.</p><button class="btn ghost" id="out2">Keluar</button></section>`;$("out2").onclick=logout;nav();return}}
   if(sum)tab=tabs()[0][0];render()}
+let habisJalan=false;
+async function sesiHabis(){if(!user||habisJalan)return;habisJalan=true;
+  try{await sb.auth.signOut({scope:"local"}).catch(()=>{});user=null;sum=null;recent=openV=staff=null;vc=mem=null;legacyOn=null;mf=mf0();
+    toast(KoiMfa.PESAN_HABIS);await render()}finally{habisJalan=false}}
+// Saat halaman dibuka lagi: sesi sudah hilang padahal layar masih menampilkan akun yang masuk.
+async function cekSesi(){if(!sb||!user||document.hidden)return;
+  try{const {data,error}=await sb.auth.getSession();if(!data.session&&!(error&&/Failed to fetch|NetworkError|Load failed/i.test(error.message||"")))await sesiHabis()}catch(e){}}
+document.addEventListener("visibilitychange",cekSesi);addEventListener("focus",cekSesi);
 async function logout(){await sb.auth.signOut().catch(()=>{});user=null;sum=null;recent=openV=staff=null;vc=mem=null;legacyOn=null;mf=mf0();render()}
 async function render(){nav();if(!sb){$("app").innerHTML=`<section class="card"><h2>Belum disambungkan</h2><p class="muted">Isi <code>kolam/config.js</code> dengan Project URL dan kunci publishable Supabase.</p></section>`;return}
   if(!user||!sum){$("app").innerHTML=vAuth();bindAuth();return}
