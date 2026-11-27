@@ -892,7 +892,7 @@ begin
     begin
       insert into kk_receipts(nota, total, created_by, code_hash, bound_phone, expires_at, pos_nota_id, held)
       values (v_no, v_kk_total, v_uid, encode(extensions.digest(v_code, 'sha256'), 'hex'), v_phone,
-              v_now + case when v_phone is not null then interval '7 days' else interval '2 hours' end, v_id, v_held);
+              v_now + case when v_phone is not null then interval '7 days' else interval '24 hours' end, v_id, v_held);
     exception when unique_violation then
       get stacked diagnostics v_constraint = constraint_name;
       if v_constraint like '%code_hash%' then raise exception 'Kode bentrok, coba lagi'; end if;
@@ -1065,7 +1065,7 @@ begin
   select * into r from kk_receipts where pos_nota_id = n.id for update;
   if found then
     update kk_receipts set held = false,
-           expires_at = now() + case when bound_phone is not null then interval '7 days' else interval '2 hours' end
+           expires_at = now() + case when bound_phone is not null then interval '7 days' else interval '24 hours' end
      where nota = r.nota;
   end if;
   perform pos__audit('pos_notas', n.id::text, 'lepas_tahan', jsonb_build_object('held', true, 'expires_at', r.expires_at),

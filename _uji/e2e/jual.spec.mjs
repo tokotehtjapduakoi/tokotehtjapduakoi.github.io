@@ -36,7 +36,8 @@ test("jual tunai lengkap", async () => {
   await page.locator(".kembali.besar", { hasText: "Kembalian Rp20.000" }).waitFor();
   assert.match(await page.locator(".selesai .kode").first().innerText(), /^K\d{6}-001$/);
   assert.equal(await page.locator(".qr svg").count(), 1);
-  assert.equal(await page.getByRole("link", { name: "Kirim WA" }).count(), 0, "tanpa nomor HP tidak ada tombol WA");
+  assert.equal(await page.getByRole("link", { name: "Kirim WA" }).count(), 0, "tidak ada tombol Kirim WA");
+  assert.equal(await page.getByLabel(/Nomor HP pelanggan/).count(), 0);
   const n = await sql.query("select count(*)::int as n, sum(total)::int as total from pos_notas");
   assert.deepEqual(n.rows[0], { n: 1, total: 30000 });
   const o = await sql.query("select (metadata->>'size')::int as ukuran, name from storage.objects where bucket_id = 'bukti'");
@@ -64,26 +65,53 @@ test("lunas nonaktif tanpa foto", async () => {
   await context.close();
 });
 
-test("kirim WA", async () => {
+const teksQr = async (page) => {
+  const href = await page.locator(".qr").getAttribute("data-link");
+  assert.ok(href.startsWith("https://wa.me/6281345306571?text="), href);
+  return decodeURIComponent(href.split("?text=")[1]);
+};
+
+test("QR Selesai: chat ke WA toko dengan teks nota + tautan kartu koi", async () => {
+  const { context, page, buka } = await bukaHalaman(browser, server);
+  await siap(page, buka);
+  await isiKeranjang(page, 2);
+  await page.getByRole("button", { name: "Bayar", exact: true }).click();
+  await page.getByRole("button", { name: "QRIS" }).click();
+  await ambilFoto(page);
+  await page.getByRole("button", { name: "Lunas" }).click();
+  await page.locator(".qr").waitFor();
+  await page.getByText("Scan untuk kirim nota ke WhatsApp toko & tarik kartu koi").waitFor();
+  const no = (await page.locator(".selesai .kode").first().innerText()).trim();
+  assert.match(no, /^K\d{6}-\d{3}$/);
+  const kode = (await page.locator("#kode-klaim").innerText()).trim();
+  assert.match(kode, /^[A-Z0-9]{5}-[A-Z0-9]{5}$/);
+  const teks = await teksQr(page);
+  assert.equal(teks, `Halo Tjap Dua Koi! Nota saya ${no} · 2× Teh Tarik 14 oz · Rp30.000.\nTarik kartu koi: https://tokotehtjapduakoi.github.io/kolam/?kode=${kode}`);
+  const r = await sql.query("select bound_phone, expires_at - now() > interval '23 hours' as sehari from kk_receipts order by created_at desc limit 1");
+  assert.deepEqual(r.rows[0], { bound_phone: null, sehari: true });
+  const n = await sql.query("select customer_phone from pos_notas order by received_at desc limit 1");
+  assert.equal(n.rows[0].customer_phone, null);
+  await context.close();
+});
+
+test("QR Selesai: total Rp0 tanpa baris Tarik kartu koi", async () => {
+  const m = await sql.query(`insert into auth.users(email, raw_user_meta_data) values ('6281200000098@member.tjapduakoi.id', '{"phone":"6281200000098"}') returning id`);
+  await sql.query("insert into kk_members(user_id, phone, nickname) values ($1, '6281200000098', 'Uji0') on conflict do nothing", [m.rows[0].id]);
+  await sql.query("insert into kk_exchanges(member_id, kind, item, points, code) values ($1, 'hadiah', '1 minuman gratis', 30, 'TK-UJI00')", [m.rows[0].id]);
   const { context, page, buka } = await bukaHalaman(browser, server);
   await siap(page, buka);
   await isiKeranjang(page);
   await page.getByRole("button", { name: "Bayar", exact: true }).click();
   await page.getByRole("button", { name: "QRIS" }).click();
-  await page.getByLabel("Nomor HP pelanggan (opsional)").fill("0812-0000-0001");
+  await page.getByLabel("Voucher TK- (opsional)").fill("tk-uji00");
+  await page.locator("#ringkas .total").getByText("Rp0").waitFor();
   await ambilFoto(page);
   await page.getByRole("button", { name: "Lunas" }).click();
-  const wa = page.getByRole("link", { name: "Kirim WA" });
-  await wa.waitFor();
-  const href = await wa.getAttribute("href");
-  assert.ok(href.startsWith("https://wa.me/6281200000001?text="), href);
-  const teks = decodeURIComponent(href.split("?text=")[1]);
-  const kode = (await page.locator("#kode-klaim").innerText()).trim();
-  assert.match(kode, /^[A-Z0-9]{5}-[A-Z0-9]{5}$/);
-  assert.ok(teks.includes("?kode=" + kode) && teks.includes("Kode: " + kode + " (berlaku 7 hari)"), teks);
-  assert.ok(teks.includes("1× Teh Tarik 14 oz  Rp15.000") && teks.includes("Total Rp15.000 (QRIS)"), teks);
-  const r = await sql.query("select bound_phone, expires_at - now() > interval '6 days' as tujuh_hari from kk_receipts order by created_at desc limit 1");
-  assert.deepEqual(r.rows[0], { bound_phone: "6281200000001", tujuh_hari: true });
+  await page.locator(".qr").waitFor();
+  const no = (await page.locator(".selesai .kode").first().innerText()).trim();
+  const teks = await teksQr(page);
+  assert.equal(teks, `Halo Tjap Dua Koi! Nota saya ${no} · 1× Teh Tarik 14 oz (voucher) · Rp0.`);
+  assert.ok(!teks.includes("?kode=") && !teks.includes("Tarik kartu"));
   await context.close();
 });
 
@@ -169,7 +197,7 @@ test("diskon persen yang tidak habis dibagi: total di layar = total server", asy
   await context.close();
 });
 
-test("voucher TK- pada baris qty 2: 1 porsi gratis, teks WA, voucher terpakai", async () => {
+test("voucher TK- pada baris qty 2: 1 porsi gratis, teks QR, voucher terpakai", async () => {
   const m = await sql.query(`insert into auth.users(email, raw_user_meta_data) values ('6281200000099@member.tjapduakoi.id', '{"phone":"6281200000099"}') returning id`);
   await sql.query("insert into kk_members(user_id, phone, nickname) values ($1, '6281200000099', 'Uji') on conflict do nothing", [m.rows[0].id]);
   await sql.query("insert into kk_exchanges(member_id, kind, item, points, code) values ($1, 'hadiah', '1 minuman gratis', 30, 'TK-UJI01')", [m.rows[0].id]);
@@ -181,13 +209,11 @@ test("voucher TK- pada baris qty 2: 1 porsi gratis, teks WA, voucher terpakai", 
   await page.getByRole("button", { name: "QRIS" }).click();
   await page.getByLabel("Voucher TK- (opsional)").fill("tk-uji01");
   await page.locator("#ringkas .total").getByText("Rp16.000").waitFor();
-  await page.getByLabel("Nomor HP pelanggan (opsional)").fill("081200000003");
   await ambilFoto(page);
   await page.getByRole("button", { name: "Lunas" }).click();
-  const wa = page.getByRole("link", { name: "Kirim WA" });
-  await wa.waitFor();
-  const teks = decodeURIComponent((await wa.getAttribute("href")).split("?text=")[1]);
-  assert.ok(teks.includes("1× Teh Tarik 14 oz  Rp16.000\n1× Teh Tarik 14 oz (voucher)  Rp0\nTotal Rp16.000 (QRIS)"), teks);
+  await page.locator(".qr").waitFor();
+  const teks = await teksQr(page);
+  assert.ok(teks.includes("· 1× Teh Tarik 14 oz, 1× Teh Tarik 14 oz (voucher) · Rp16.000."), teks);
   const v = await sql.query("select used_at is not null as dipakai from kk_exchanges where code = 'TK-UJI01'");
   assert.equal(v.rows[0].dipakai, true);
   const n = await sql.query("select total, voucher_code from pos_notas order by received_at desc limit 1");

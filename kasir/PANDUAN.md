@@ -59,8 +59,8 @@ Kasir otomatis keluar kalau 30 menit tidak dipakai. Keluar ditolak selama masih 
 
 ## 7. Alur harian
 1. **Buka toko:** kasir masuk, ketik modal awal (uang di laci), ketuk **Buka toko**.
-2. **Jual:** tab **Jual** → ketuk menu → pilih metode bayar (dan diskon bila ada) → ambil foto bukti (wajib) → **Lunas**. Layar menampilkan **kode klaim** `XXXXX-XXXXX` dan tombol **Kirim WA**.
-3. **Pelanggan klaim kartu:** kasir menunjukkan kode atau mengirimnya lewat WA. Pelanggan membuka Kolam Koi, ketik kode, kartu langsung masuk ke kolam. Kode berlaku 7 hari kalau terikat nomor HP, 2 jam kalau tidak.
+2. **Jual:** tab **Jual** → ketuk menu → pilih metode bayar (dan diskon bila ada) → ambil foto bukti (wajib) → **Lunas**. Layar menampilkan **QR**; kode klaim `XXXXX-XXXXX` tampil kecil di bawahnya.
+3. **Pelanggan klaim kartu:** kasir menunjukkan QR di layar. Pelanggan scan dengan kamera HP-nya: WhatsApp terbuka ke nomor WhatsApp toko dengan teks nota yang sudah terisi, pelanggan tinggal ketuk **Kirim**, lalu ketuk tautan **Tarik kartu koi** di teks itu untuk membuka Kolam Koi. Kode berlaku 24 jam kalau tidak terikat nomor HP, 7 hari kalau terikat nomor HP.
 4. **Salah input:** kasir mengajukan batal di tab **Nota**. Pemilik memutuskan di tab **Setujui** (**Pengajuan batal**).
 5. **Ganti kasir:** tab **Kas** → ketuk **Serah terima ke kasir berikutnya** → hitung uang, foto laci → **Serahkan laci**. Kasir berikutnya masuk di HP-nya, menghitung uang, lalu ketuk **Terima laci**.
 6. **Tutup toko:** kasir terakhir → tab **Kas** → **Tutup toko** → hitung uang, foto laci → **Tutup toko sekarang**.

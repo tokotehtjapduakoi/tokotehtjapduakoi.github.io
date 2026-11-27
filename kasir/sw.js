@@ -3,7 +3,7 @@
    - kolam/vendor/* dan font: dari cache dulu (nama berkas sudah berversi), jaringan hanya bila belum ada.
    - Lainnya (Supabase *.supabase.co, API di luar folder kasir/): tidak disentuh, selalu lewat jaringan.
    Ganti CACHE (kasir-v2, ...) bila daftar INTI berubah atau cache lama perlu dibuang. */
-const CACHE="kasir-v6";
+const CACHE="kasir-v7";
 const INTI=["./","kasir.css","config.js","kode.js","foto.js","antrean.js","kasir.js","../kolam/mfa.js","pemilik.js","manifest.webmanifest","ikon.svg","ikon-180.png","ikon-192.png",
   "../kolam/vendor/supabase-2.45.4.js","../kolam/vendor/qrcode-generator-1.4.4.js","../favicon.ico"];
 const LINGKUP=new URL("./",self.registration.scope);

@@ -68,6 +68,8 @@ test("jual saat offline lalu terkirim", async () => {
   assert.equal(await page.locator(".qr svg").count(), 1);
   const kode = (await page.locator("#kode-klaim").innerText()).trim();
   assert.match(kode, /^[A-Z0-9]{5}-[A-Z0-9]{5}$/);
+  const teks1 = decodeURIComponent((await page.locator(".qr").getAttribute("data-link")).split("?text=")[1]);
+  assert.equal(teks1, `Halo Tjap Dua Koi! Nota saya nota baru · 1× Teh Tarik 14 oz · Rp15.000.\nTarik kartu koi: https://tokotehtjapduakoi.github.io/kolam/?kode=${kode}`);
   await bilah(page).getByText("Offline · 1 nota menunggu").waitFor();
   assert.equal(await jumlahNota(), sebelum, "belum ada nota di server");
 
@@ -80,6 +82,8 @@ test("jual saat offline lalu terkirim", async () => {
   await bilah(page).getByText("Online", { exact: true }).waitFor();
   // layar Selesai ikut diperbarui dengan nomor nota dari server
   await page.locator(".selesai .kode", { hasText: /^K\d{6}-\d{3}$/ }).waitFor();
+  const no = (await page.locator(".selesai .kode").first().innerText()).trim();
+  assert.ok(decodeURIComponent((await page.locator(".qr").getAttribute("data-link")).split("?text=")[1]).startsWith(`Halo Tjap Dua Koi! Nota saya ${no} · `));
   await context.close();
 });
 

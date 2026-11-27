@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
-globalThis.KASIR_CONFIG = { kolamUrl: "https://tokotehtjapduakoi.github.io/kolam/" };
+globalThis.KASIR_CONFIG = { kolamUrl: "https://tokotehtjapduakoi.github.io/kolam/", waNomor: "6281345306571" };
 const K = createRequire(import.meta.url)("../kasir/kode.js");
 
 test("buat: 10 karakter alfabet, tidak ada duplikat", () => {
@@ -42,13 +42,13 @@ test("normal dan tampil", () => {
   assert.equal(K.tampil("abcde-23456"), "ABCDE-23456");
 });
 
-test("urlKlaim, teksWa, linkWa", () => {
+test("urlKlaim, teksNotaToko, linkWaToko", () => {
   assert.equal(K.urlKlaim("ABCDE23456"), "https://tokotehtjapduakoi.github.io/kolam/?kode=ABCDE-23456");
-  const t = K.teksWa({ no: "K261125-001", lines: [{ qty: 2, item: "Teh Tarik", variant: "14 oz", price: 15000 }],
-    total: 30000, method: "Tunai", kode: "ABCDE23456", tanggal: new Date("2026-11-25T06:30:00Z") });
-  assert.match(t, /\?kode=ABCDE-23456/);
-  assert.match(t, /^Toko Teh Tjap Dua Koi\nNota K261125-001 · 25 Nov 2026 14:30\n2× Teh Tarik 14 oz  Rp30\.000\nTotal Rp30\.000 \(Tunai\)\n\nTarik kartu koi-mu di Kolam Koi:\n/);
-  assert.match(t, /Kode: ABCDE-23456 \(berlaku 7 hari\)\n\nTerima kasih, sampai ketemu lagi!$/);
-  const l = K.linkWa("6281200000001", "a b\nc");
-  assert.equal(l, "https://wa.me/6281200000001?text=a%20b%0Ac");
+  const lines = [{ qty: 2, item: "Teh Tarik", variant: "14 oz", price: 15000 }, { qty: 1, item: "Milo Tarik", variant: "14 oz", price: 17000 }];
+  assert.equal(K.teksNotaToko({ no: "K261125-001", lines, total: 47000, kode: "ABCDE23456" }),
+    "Halo Tjap Dua Koi! Nota saya K261125-001 · 2× Teh Tarik 14 oz, 1× Milo Tarik 14 oz · Rp47.000.\nTarik kartu koi: https://tokotehtjapduakoi.github.io/kolam/?kode=ABCDE-23456");
+  assert.match(K.teksNotaToko({ no: null, lines, total: 47000, kode: "ABCDE23456" }), /^Halo Tjap Dua Koi! Nota saya nota baru · /);
+  assert.equal(K.teksNotaToko({ no: "K1", lines: lines.slice(0, 1), total: 0, kode: "ABCDE23456" }),
+    "Halo Tjap Dua Koi! Nota saya K1 · 2× Teh Tarik 14 oz · Rp0.");
+  assert.equal(K.linkWaToko("a b\nc"), "https://wa.me/6281345306571?text=a%20b%0Ac");
 });

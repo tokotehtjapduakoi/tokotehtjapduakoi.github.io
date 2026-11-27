@@ -187,10 +187,10 @@ def test_kode_terikat_nomor_7_hari(db, toko):
     toko.ditolak(toko.payload(customer_phone="12345", code="ABCDE23457"), "Nomor HP pelanggan tidak valid")
 
 
-def test_kode_tanpa_nomor_2_jam(db, toko):
+def test_kode_tanpa_nomor_24_jam(db, toko):
     toko.checkout(toko.payload())
     assert db.sql("select bound_phone, expires_at - (select received_at from pos_notas) from kk_receipts") \
-        == [(None, "02:00:00")]
+        == [(None, "1 day")]
 
 
 def test_kode_klaim_divalidasi(db, toko):
@@ -399,7 +399,7 @@ def test_lepas_tahanan(db, toko):
     assert db.sql(f"select held, expires_at > now() + interval '6 days 23 hours' from kk_receipts "
                   f"where pos_nota_id = '{r['id']}'") == [("f", "t")]
     json.loads(db.sql(f"select pos_hold_release('{r2['id']}')", sebagai=toko.pemilik)[0][0])
-    assert db.sql(f"select expires_at between now() + interval '1 hour 59 minutes' and now() + interval '2 hours' "
+    assert db.sql(f"select expires_at between now() + interval '23 hours 59 minutes' and now() + interval '24 hours' "
                   f"from kk_receipts where pos_nota_id = '{r2['id']}'") == [("t",)]
     assert db.sql("select pos_held_list()", sebagai=toko.pemilik) == [("[]",)]
     assert db.sql("select action, new->>'nota' from pos_audit where action = 'lepas_tahan' order by id") == [

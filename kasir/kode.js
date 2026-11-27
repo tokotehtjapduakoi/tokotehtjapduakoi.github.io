@@ -1,4 +1,4 @@
-/* Kode klaim Kolam Koi: dibuat di HP, ditampilkan XXXXX-XXXXX, dibuat QR dan teks WA. */
+/* Kode klaim Kolam Koi: dibuat di HP, ditampilkan XXXXX-XXXXX, dibuat QR dan teks nota ke WA toko. */
 (function(g){
 "use strict";
 const ALFABET="ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // 31 karakter
@@ -13,16 +13,15 @@ const urlKlaim=k=>((g.KASIR_CONFIG||{}).kolamUrl||"")+"?kode="+tampil(k);
 function qrSvg(text){const q=g.qrcode(0,"M");q.addData(text);q.make();
   return q.createSvgTag({cellSize:4,margin:2,scalable:true,alt:"QR kode klaim"})}
 const rp=n=>"Rp"+Math.round(Number(n)||0).toString().replace(/\B(?=(\d{3})+(?!\d))/g,".");
-const waktu=d=>{const f=o=>new Intl.DateTimeFormat("id-ID",{timeZone:"Asia/Makassar",...o}).format(d);
-  return f({day:"numeric",month:"short",year:"numeric"})+" "+f({hour:"2-digit",minute:"2-digit",hour12:false}).replace(".",":")};
-// lines: [{qty, item, variant, price}] (price = harga satuan). tanggal: Date (bawaan: sekarang).
-function teksWa({no,lines,total,method,kode,tanggal}){
-  const baris=(lines||[]).map(l=>`${l.qty}× ${l.item} ${l.variant}  ${rp(l.price*l.qty)}`);
-  return ["Toko Teh Tjap Dua Koi",`Nota ${no} · ${waktu(tanggal||new Date())}`,...baris,
-    `Total ${rp(total)} (${method})`,"","Tarik kartu koi-mu di Kolam Koi:",urlKlaim(kode),
-    `Kode: ${tampil(kode)} (berlaku 7 hari)`,"","Terima kasih, sampai ketemu lagi!"].join("\n")}
-const linkWa=(phone62,teks)=>`https://wa.me/${phone62}?text=${encodeURIComponent(teks)}`;
-const K={buat,tampil,normal,urlKlaim,qrSvg,teksWa,linkWa,rp};
+// Teks yang terisi di WhatsApp pelanggan (chat ke nomor WA toko). no kosong = nota masih antre offline.
+// lines: [{qty, item, variant}]. kode kosong atau total 0 = tanpa baris "Tarik kartu koi".
+function teksNotaToko({no,lines,total,kode}){
+  const baris=(lines||[]).map(l=>`${l.qty}× ${l.item} ${l.variant}`).join(", ");
+  const kepala=`Halo Tjap Dua Koi! Nota saya ${no||"nota baru"} · ${baris} · ${rp(total)}.`;
+  return Number(total)>0&&kode?kepala+"\nTarik kartu koi: "+urlKlaim(kode):kepala}
+const linkWaToko=teks=>`https://wa.me/${(g.KASIR_CONFIG||{}).waNomor||""}?text=${encodeURIComponent(teks)}`;
+const waNomorAda=()=>!!((g.KASIR_CONFIG||{}).waNomor);
+const K={buat,tampil,normal,urlKlaim,qrSvg,teksNotaToko,linkWaToko,waNomorAda,rp};
 g.KasirKode=K;
 if(typeof module==="object"&&module.exports)module.exports=K;
 })(typeof globalThis!=="undefined"?globalThis:window);

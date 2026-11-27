@@ -63,14 +63,10 @@ function bindTunggu(){$("cek").onclick=async()=>{if(sibuk)return;sibuk=true;$("c
 
 /* ---------- Jual: menu -> keranjang -> bayar -> foto -> lunas -> QR/WA ---------- */
 const rp=n=>KasirKode.rp(n);
-const J0=()=>({tahap:"menu",cart:[],sheet:null,notaId:null,metode:null,uang:"",disc:"",voucher:"",hp:"",
+const J0=()=>({tahap:"menu",cart:[],sheet:null,notaId:null,metode:null,uang:"",disc:"",voucher:"",
   foto:null,fotoUrl:null,fotoKunci:false,kode:null,pesan:"",sibuk:false,selesai:null});
 let J=J0();
 const digit=s=>String(s||"").replace(/\D/g,"");
-// 08xx / 8xx / +62xx -> 62xx. Kosong -> "". Tidak sah -> null.
-function hp62(s){let d=digit(s);if(!d)return "";
-  if(d.startsWith("0"))d="62"+d.slice(1);else if(d.startsWith("8"))d="62"+d;
-  return /^62[0-9]{8,13}$/.test(d)?d:null}
 const cat=()=>S.catalog||{items:[],methods:[],discounts:[]};
 const metodeAktif=()=>cat().methods.find(m=>String(m.id)===String(J.metode));
 // Voucher TK- hanya bisa dicek server: saat offline tidak dipakai.
@@ -84,7 +80,7 @@ function hitung(){const sub=J.cart.reduce((a,l)=>a+l.qty*l.price,0);
   const total=dasar-pot,tunai=!!metodeAktif()&&metodeAktif().kind==="tunai",uang=parseInt(digit(J.uang)||"0",10);
   return {sub,vc,pot,total,tunai,uang,kembali:uang-total,d}}
 function bisaLunas(){const h=hitung();
-  return !J.sibuk&&J.cart.length>0&&!!metodeAktif()&&!!J.foto&&hp62(J.hp)!==null&&(!h.tunai||h.uang>=h.total)}
+  return !J.sibuk&&J.cart.length>0&&!!metodeAktif()&&!!J.foto&&(!h.tunai||h.uang>=h.total)}
 
 function vSheet(){const it=cat().items.find(i=>String(i.id)===String(J.sheet));if(!it)return "";
   return `<div class="tirai"><div class="sheet" role="dialog" aria-label="Pilih ukuran ${esc(it.name)}"><h2>${esc(it.name)}</h2>
@@ -111,8 +107,6 @@ function vBayar(){const c=cat(),h=hitung();
   ${c.discounts.length?`<label for="dk">Diskon (opsional)<select id="dk"><option value="">Tanpa diskon</option>${c.discounts.map(d=>`<option value="${esc(d.id)}"${String(d.id)===String(J.disc)?" selected":""}>${esc(d.name)} (${d.kind==="persen"?esc(d.value)+"%":rp(d.value)})</option>`).join("")}</select></label>`:""}
   <label for="vc">Voucher TK- (opsional)<input id="vc" autocomplete="off" autocapitalize="characters" placeholder="TK-..." value="${esc(J.voucher)}"${daring()?"":" disabled"}></label>
   ${daring()?"":`<span class="small muted">Voucher TK- tidak bisa dipakai saat offline.</span>`}
-  <label for="hp">Nomor HP pelanggan (opsional)<input id="hp" type="tel" inputmode="tel" autocomplete="off" placeholder="0812..." value="${esc(J.hp)}"></label>
-  <p class="err" id="hperr" role="alert"></p>
   <div class="fotobox"><button type="button" class="btn ghost" id="foto"${J.fotoKunci?" disabled":""}>${J.fotoKunci?"Foto terkunci":J.foto?"Ganti foto bukti":"Ambil foto bukti"}</button>
   ${J.fotoKunci?`<span class="small muted">Foto sudah terunggah sebagai bukti nota ini, tidak bisa diganti.</span>`:""}
   ${J.fotoUrl?`<img class="prat" src="${esc(J.fotoUrl)}" alt="Pratinjau foto bukti">`:`<span class="small muted">Foto bukti wajib sebelum Lunas.</span>`}</div>
@@ -124,21 +118,21 @@ function vRingkas(h){return `${h.vc?`<div class="rg"><span>Voucher (1 porsi grat
 function vKembali(h){if(!h.uang)return "";return h.kembali>=0?`Kembalian ${rp(h.kembali)}`:`Kurang ${rp(-h.kembali)}`}
 function segarBayar(){const h=hitung();
   $("ringkas").innerHTML=vRingkas(h);const k=$("kembali");if(k)k.textContent=vKembali(h);
-  const ok=hp62(J.hp)!==null;$("hperr").textContent=ok?"":"Nomor HP belum benar. Contoh: 0812 3456 7890.";
   $("lunas").disabled=!bisaLunas()}
 
-function vSelesai(){const s=J.selesai,r=s.hasil;
-  const aktif=r.code_status==="aktif";
+function vSelesai(){const s=J.selesai,r=s.hasil,K=KasirKode;
+  const ada=r.code_status==="aktif"||r.code_status==="ditahan",wa=K.waNomorAda();
+  const teks=K.teksNotaToko({no:r.no,lines:s.baris,total:r.total,kode:ada?s.kode:null});
+  const tautan=wa?K.linkWaToko(teks):ada?K.urlKlaim(s.kode):"";
   return `<section class="card selesai"><h2>Lunas</h2>${s.antre?`<p class="antre">Tersimpan di HP, akan terkirim otomatis</p>`:`<p class="small muted">Nota <b class="kode">${esc(r.no)}</b></p>`}
   <div class="total"><span>Total</span><b>${rp(r.total)}</b></div>
   ${s.tunai&&r.change!=null?`<p class="kembali besar">Kembalian ${rp(r.change)}</p>`:""}
-  ${aktif?`<div class="qr" aria-label="QR kode klaim">${KasirKode.qrSvg(KasirKode.urlKlaim(s.kode))}</div>
-  <p class="tengah-teks">Kode: <span class="kode" id="kode-klaim">${esc(KasirKode.tampil(s.kode))}</span></p>
-  <p class="small muted tengah-teks">Pelanggan scan QR ini untuk menarik kartu koi di Kolam Koi.</p>`
-  :r.code_status==="ditahan"?`<p class="muted">Kode klaim ditahan. Hubungi pemilik.</p>`
-  :`<p class="muted">Total Rp0: tidak ada kartu koi untuk nota ini.</p>`}
-  <div class="aksi">${aktif&&s.hp?`<a class="btn" id="wa" target="_blank" rel="noopener" href="${esc(KasirKode.linkWa(s.hp,s.teks))}">Kirim WA</a>`:""}
-  <button type="button" class="btn ${aktif&&s.hp?"ghost":""}" id="baru">Nota baru</button></div></section>`}
+  ${tautan?`<div class="qr" aria-label="QR kirim nota ke WhatsApp toko" data-link="${esc(tautan)}">${K.qrSvg(tautan)}</div>
+  ${ada?`<p class="tengah-teks small">Kode: <span class="kode" id="kode-klaim">${esc(K.tampil(s.kode))}</span></p>`:""}
+  <p class="small muted tengah-teks">${wa?"Scan untuk kirim nota ke WhatsApp toko &amp; tarik kartu koi":"Pelanggan scan QR ini untuk menarik kartu koi di Kolam Koi."}</p>`:""}
+  ${r.code_status==="ditahan"?`<p class="muted">Kode klaim ditahan sementara, kartu muncul setelah pemilik melepas tahanan.</p>`:""}
+  ${r.code_status==="tidak_ada"?`<p class="muted">Total Rp0: tidak ada kartu koi untuk nota ini.</p>`:""}
+  <div class="aksi"><button type="button" class="btn" id="baru">Nota baru</button></div></section>`}
 
 function vJual(){
   const kepala=`<div class="head"><h1>Kasir</h1><button type="button" class="btn sm ghost" id="out">Keluar</button></div><p class="small muted">${esc(S.me.name||S.user.email)}</p>`;
@@ -161,17 +155,16 @@ function bangunPayload(){const h=hitung(),m=metodeAktif();
   return {id:J.notaId,device:S.device,client_at:new Date().toISOString(),offline:false,
     lines:J.cart.map(l=>({variant_id:l.vid,qty:l.qty})),discount_id:J.disc?Number(J.disc):null,
     voucher_code:voucherDipakai()||null,method_id:m.id,total:h.total,cash_received:h.tunai?h.uang:null,
-    photo_path:`${S.user.id}/${J.notaId}.jpg`,customer_phone:hp62(J.hp)||null,code:J.kode}}
-// Baris untuk teks WA: seperti nota di server (voucher = 1 porsi baris pertama gratis).
-function barisWa(){const l=J.cart.map(x=>({qty:x.qty,item:x.item,variant:x.variant,price:x.price}));
+    photo_path:`${S.user.id}/${J.notaId}.jpg`,customer_phone:null,code:J.kode}}
+// Baris untuk teks nota ke WA toko: seperti nota di server (voucher = 1 porsi baris pertama gratis).
+function barisNota(){const l=J.cart.map(x=>({qty:x.qty,item:x.item,variant:x.variant,price:x.price}));
   if(voucherDipakai()&&l.length){const f=l[0];if(f.qty>1){l[0]={...f,qty:f.qty-1};l.push({...f,qty:1,variant:f.variant+" (voucher)",price:0})}else l[0]={...f,variant:f.variant+" (voucher)",price:0}}
   return l}
-const teksSelesai=s=>KasirKode.teksWa({no:s.hasil.no||"(dikirim nanti)",lines:s.baris,total:s.hasil.total,method:s.metode,kode:s.kode});
 // Lunas: nota (dengan kode klaim dan foto) selalu masuk antrean dulu, lalu dicoba dikirim.
 // Gagal jaringan: layar Selesai tetap tampil dari data HP. Ditolak server: nota dibuang dari antrean, kasir memperbaiki.
 async function lunas(){if(!bisaLunas())return;J.sibuk=true;J.pesan="";segarBayar();$("lunas").textContent="Menyimpan...";
   const p=bangunPayload(),h=hitung(),m=metodeAktif();
-  const s={id:p.id,tunai:h.tunai,hp:hp62(J.hp)||"",baris:barisWa(),metode:m.name,kode:p.code,antre:true,
+  const s={id:p.id,tunai:h.tunai,baris:barisNota(),metode:m.name,kode:p.code,antre:true,
     hasil:{no:null,total:h.total,change:h.tunai?h.uang-h.total:null,code_status:h.total>0?"aktif":"tidak_ada"}};
   try{await Antrean.simpan({id:p.id,uid:S.user.id,payload:p,foto:J.foto,fotoPath:p.photo_path,dibuat:Date.now()})}
   catch(err){J.sibuk=false;J.pesan="Nota gagal disimpan di HP: "+errMsg(err);render();return}
@@ -190,7 +183,7 @@ async function lunas(){if(!bisaLunas())return;J.sibuk=true;J.pesan="";segarBayar
   else{const ok=r.hasil[p.id];
     if(ok)Object.assign(s,{hasil:ok.hasil,kode:ok.kode,antre:false});
     else{const it=await Antrean.ambil(p.id).catch(()=>null);if(it)s.kode=it.payload.code}
-    s.teks=teksSelesai(s);J.selesai=s;J.tahap="selesai";
+    J.selesai=s;J.tahap="selesai";
     if(J.fotoUrl)URL.revokeObjectURL(J.fotoUrl);J.fotoUrl=null;J.foto=null}
   J.sibuk=false;await segarBilah();render()}
 
@@ -218,7 +211,6 @@ function bindBayar(){
     J.uang=String(b.dataset.cepat==="pas"?hitung().total:b.dataset.cepat);$("uang").value=J.uang;segarBayar()});
   const dk=$("dk");if(dk)dk.onchange=()=>{J.disc=dk.value;segarBayar()};
   $("vc").oninput=e=>{J.voucher=e.target.value;segarBayar()};
-  $("hp").oninput=e=>{J.hp=e.target.value;segarBayar()};
   $("foto").onclick=async()=>{try{const f=await KasirFoto.ambil();const k=await KasirFoto.kecilkan(f);
       if(J.fotoUrl)URL.revokeObjectURL(J.fotoUrl);J.foto=k;J.fotoUrl=URL.createObjectURL(k);J.pesan="";render()}
     catch(e){if(!/dibatalkan|Tidak ada foto/.test(e.message))toast(errMsg(e))}};
@@ -457,7 +449,7 @@ async function kirimAntrean(){if(!S.user||J.sibuk)return;
   await segarBilah()}
 // Nota yang sedang tampil di layar Selesai sebagai "Tersimpan di HP" sudah sampai: tampilkan nomor dari server.
 function terapkanHasil(r){const s=J.selesai,ok=s&&s.antre&&r&&r.hasil[s.id];
-  if(!ok)return;Object.assign(s,{hasil:ok.hasil,kode:ok.kode,antre:false});s.teks=teksSelesai(s);if(J.tahap==="selesai")render()}
+  if(!ok)return;Object.assign(s,{hasil:ok.hasil,kode:ok.kode,antre:false});if(J.tahap==="selesai")render()}
 let sidikAntre="";
 async function segarBilah(){try{S.antre=await Antrean.daftar()}catch(e){S.antre=[]}renderBilah();
   // Isi antrean berubah (terkirim/ditolak): perbarui daftar Nota bila sedang terbuka.
